@@ -6,20 +6,16 @@ import streamlit as st
 from datetime import datetime
 
 # ==============================================================================
-# CONFIGURACIÓN DE LA PÁGINA DE STREAMLIT
+# SECCIÓN 1: CONFIGURACIÓN DE LA PÁGINA
 # ==============================================================================
-st.set_page_config(
-    page_title="Asistente de Reporte CB Failed",
-    layout="wide"
-)
+st.set_page_config(page_title="Asistente CB Failed", layout="wide")
 
 # ==============================================================================
-# FUNCIONES DEL BOT (EL "CEREBRO")
+# SECCIÓN 2: FUNCIONES DEL BOT (EL "CEREBRO")
 # ==============================================================================
 
 @st.cache_data
 def get_npi_data(npi_number):
-    # (El código de esta función no cambia)
     if not npi_number or not str(npi_number).strip().isdigit(): return None
     npi_number = str(npi_number).strip()
     api_url = f"https://npiregistry.cms.hhs.gov/api/?version=2.1&number={npi_number}"
@@ -38,31 +34,29 @@ def get_npi_data(npi_number):
     except requests.exceptions.RequestException: return None
 
 @st.cache_data
-def load_local_dictionaries(files_to_load):
-    st.info("Cargando diccionarios locales...")
+def load_dictionaries_by_filename(_uploaded_files):
+    if not _uploaded_files: return {}
+    st.info("Cargando diccionarios...")
     dictionaries = {}
-    for filename in files_to_load:
+    for uploaded_file in _uploaded_files:
+        filename = uploaded_file.name
         try:
-            with open(filename, 'rb') as f:
-                content = f.read()
-                df = pd.read_csv(io.BytesIO(content), sep='|', header=0, encoding='latin1', low_memory=False, dtype=str).apply(lambda x: x.str.strip() if x.dtype == "object" else x)
-                key_name = ''
-                if 'Providers' in filename: key_name = 'providers'
-                elif 'Surgeons' in filename: key_name = 'surgeons'
-                elif 'Coder' in filename or 'DN35113' in filename: key_name = 'coders'
-                if key_name:
-                    dictionaries[key_name] = df
-                    st.sidebar.write(f"✓ '{filename}' cargado como '{key_name}'.")
-        except Exception as e:
-            st.sidebar.error(f"Error al cargar '{filename}': {e}")
+            df = pd.read_csv(uploaded_file, sep='|', header=0, encoding='latin1', low_memory=False, dtype=str).apply(lambda x: x.str.strip() if x.dtype == "object" else x)
+            key_name = ''
+            if 'Providers' in filename: key_name = 'providers'
+            elif 'Surgeons' in filename: key_name = 'surgeons'
+            elif 'Coder' in filename or 'DN35113' in filename: key_name = 'coders'
+            if key_name:
+                dictionaries[key_name] = df
+                st.sidebar.write(f"✓ '{filename}' cargado como '{key_name}'.")
+        except Exception as e: st.sidebar.error(f"Error al cargar '{filename}': {e}")
     return dictionaries
 
 @st.cache_data
 def parse_usap_corrections(_uploaded_files):
-    corrections = {}
-    if not _uploaded_files:
-        return corrections
+    if not _uploaded_files: return {}
     st.info("Procesando correcciones de USAP...")
+    corrections = {}
     for uploaded_file in _uploaded_files:
         try:
             xls = pd.ExcelFile(uploaded_file)
@@ -143,13 +137,17 @@ def process_dataframe(df, dictionaries, corrections, learned_cb_codes):
         if sin in corrections:
             source = "USAP Correction"; corr = corrections[sin]; corr_type = corr.get('type')
             if corr_type == 'change_ticket':
-                action = "CHANGE TICKET"
-                provider_info = find_provider("CBCODE", corr.get('new_cb'), "Surgeon or Provider", dictionaries)
-                api_info = get_npi_data(provider_info['npi'] if provider_info else corr.get('new_npi'))
-                name_str = (provider_info['full_name_constructed'] if provider_info else corr.get('new_name', '')).upper()
-                suggestion = f"Cambiar por: {name_str}"
-                if provider_info: details += f"Info Dicc: {provider_info['full_name_constructed']} (NPI: {provider_info['npi']}, CB: {provider_info['cbcode']})\n"
-                if api_info: details += f"Info API: {api_info['full_name']}"
+                action = "CHANGE TICKET"; new_cb = corr.get('new_cb', '')
+                if 'add to ge' in new_cb.lower():
+                    suggestion = f"Cambiar por: {corr.get('new_name', '').upper()}"
+                    details = f"El nuevo proveedor (NPI: {corr.get('new_npi')}) necesita ser añadido (ADD TO GE)."
+                else:
+                    provider_info = find_provider("CBCODE", new_cb, "Surgeon or Provider", dictionaries)
+                    api_info = get_npi_data(provider_info['npi'] if provider_info else corr.get('new_npi'))
+                    name_str = (provider_info['full_name_constructed'] if provider_info else corr.get('new_name', '')).upper()
+                    suggestion = f"Cambiar por: {name_str}"
+                    if provider_info: details += f"Info Dicc: {provider_info['full_name_constructed']} (NPI: {provider_info['npi']}, CB: {provider_info['cbcode']})\n"
+                    if api_info: details += f"Info API: {api_info['full_name']}"
             elif corr_type == 'simple_correction':
                 action = "COMPLETAR INFO"; npi_to_use = corr.get('new_npi') or npi; cb_to_use = corr.get('new_cb', '')
                 if 'add to ge' in cb_to_use.lower():
@@ -169,7 +167,7 @@ def process_dataframe(df, dictionaries, corrections, learned_cb_codes):
             provider_info = find_provider('NPI', npi, provider_type, dictionaries)
             if provider_info:
                 action = "COMPLETAR INFO"; source = "Dictionary"
-                suggestion = f"CBCode encontrado en diccionario: {provider_info['cbcode']}"
+                suggestion = f"CBCode encontrado: {provider_info['cbcode']}"
                 api_info = get_npi_data(npi)
                 if provider_info: details += f"Info Dicc: {provider_info['full_name_constructed']} (CB: {provider_info['cbcode']})\n"
                 if api_info: details += f"Info API: {api_info['full_name']}"
@@ -182,9 +180,9 @@ def process_dataframe(df, dictionaries, corrections, learned_cb_codes):
 
     type_order = ['Surgeon', 'Provider', 'RCM', 'Coder']
     if 'Type' in df.columns:
-      df['Type'] = pd.Categorical(df['Type'], categories=type_order, ordered=True)
-      df_sorted = df.sort_values(by=['Type', 'Last - Title'], ascending=True, na_position='first')
-      return df_sorted
+        df['Type'] = pd.Categorical(df['Type'], categories=type_order, ordered=True)
+        df_sorted = df.sort_values(by=['Type', 'Last - Title'], ascending=True, na_position='first')
+        return df_sorted
     return df
 
 def to_excel(df_dict):
@@ -196,29 +194,25 @@ def to_excel(df_dict):
     return processed_data
 
 # ==============================================================================
-# SECCIÓN PRINCIPAL DE LA APLICACIÓN
+# SECCIÓN 3: INTERFAZ Y EJECUCIÓN
 # ==============================================================================
 st.title("🤖 Asistente de Reporte CB Failed")
 st.markdown("Herramienta para automatizar el análisis y la corrección del reporte diario.")
 
-# --- BARRA LATERAL ---
 st.sidebar.header("1. Cargar Archivos")
-uploaded_report = st.sidebar.file_uploader("A. Cargar Reporte CB FAILED (.xlsx)", type=['xlsx'])
-local_dictionary_files = ["Surgeons.txt", "Providers.txt"] # Añadir más si es necesario
-st.sidebar.info(f"Esta app usa los diccionarios locales: {', '.join(local_dictionary_files)}")
-uploaded_corrections = st.sidebar.file_uploader("B. Cargar Correcciones de USAP (.xlsx)", type=['xlsx'], accept_multiple_files=True)
+uploaded_report = st.sidebar.file_uploader("A. Reporte CB FAILED (.xlsx)", type=['xlsx'])
+uploaded_dictionaries = st.sidebar.file_uploader("B. Diccionarios (.txt)", type=['txt'], accept_multiple_files=True)
+uploaded_corrections = st.sidebar.file_uploader("C. Correcciones de USAP (.xlsx)", type=['xlsx'], accept_multiple_files=True)
 
 st.sidebar.header("2. Iniciar Proceso")
 process_button = st.sidebar.button("✨ Procesar Reporte")
 
 if process_button:
-    if not uploaded_report:
-        st.error("Por favor, asegúrate de cargar el reporte principal.")
+    if not uploaded_report or not uploaded_dictionaries:
+        st.error("Por favor, carga el reporte principal y los diccionarios.")
     else:
-        with st.spinner("Procesando, por favor espera..."):
-            
-            # --- FASE 1: CARGA Y APRENDIZAJE ---
-            dictionaries_data = load_local_dictionaries(local_dictionary_files)
+        with st.spinner("Procesando... Esto puede tomar un minuto."):
+            dictionaries_data = load_dictionaries_by_filename(uploaded_dictionaries)
             corrections_data = parse_usap_corrections(uploaded_corrections)
             
             st.info("Aprendiendo CB Codes de correcciones simples...")
@@ -233,10 +227,8 @@ if process_button:
                             if npi and npi != 'nan':
                                 learned_cb_codes[npi] = corr['new_cb']
                 st.info(f"Se aprendieron {len(learned_cb_codes)} nuevos CB Codes para aplicar globalmente.")
-            except Exception as e:
-                st.warning(f"No se pudo leer el reporte para aprendizaje: {e}")
+            except Exception as e: st.warning(f"No se pudo leer el reporte para aprendizaje: {e}")
 
-            # --- FASE 2: PROCESAMIENTO ---
             xls_input = pd.ExcelFile(uploaded_report)
             processed_sheets = {}
             for sheet_name in xls_input.sheet_names:
@@ -247,31 +239,24 @@ if process_button:
 
             st.session_state['processed_sheets'] = processed_sheets
             st.session_state['report_name'] = uploaded_report.name
-
         st.success("¡Proceso completado!")
 
-# --- SECCIÓN 3: RESULTADOS ---
 if 'processed_sheets' in st.session_state:
     st.header("3. Revisar y Descargar Resultados")
-    
     processed_sheets = st.session_state['processed_sheets']
     
-    # --- FILTROS ---
-    st.markdown("#### Filtros")
     all_actions = sorted(pd.concat(processed_sheets.values())['Bot_Accion'].unique().tolist())
     selected_actions = st.multiselect("Filtrar por Acción del Bot:", all_actions, default=all_actions)
     
-    # --- PESTAÑAS Y TABLAS ---
     tabs = st.tabs(processed_sheets.keys())
     for i, sheet_name in enumerate(processed_sheets.keys()):
         with tabs[i]:
+            st.markdown(f"**Resultados para: {sheet_name}**")
             df_display = processed_sheets[sheet_name]
             if selected_actions:
                 df_display = df_display[df_display['Bot_Accion'].isin(selected_actions)]
-            
             st.dataframe(df_display)
 
-    # --- BOTÓN DE DESCARGA ---
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_filename = f"PROCESADO_{timestamp}_{st.session_state['report_name']}"
     excel_data = to_excel(processed_sheets)
