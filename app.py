@@ -253,13 +253,22 @@ if 'processed_sheets' in st.session_state:
     selected_actions = st.multiselect("Filtrar por Acción del Bot:", all_actions, default=all_actions)
     
     tabs = st.tabs(processed_sheets.keys())
-    for i, sheet_name in enumerate(processed_sheets.keys()):
-        with tabs[i]:
-            st.markdown(f"**Resultados para: {sheet_name}**")
-            df_display = processed_sheets[sheet_name]
-            if selected_actions:
-                df_display = df_display[df_display['Bot_Accion'].isin(selected_actions)]
-            st.dataframe(df_display)
+for i, sheet_name in enumerate(processed_sheets.keys()):
+    with tabs[i]:
+        st.markdown(f"**Resultados para: {sheet_name}**")
+        df_display = processed_sheets[sheet_name]
+        if selected_actions:
+            df_display = df_display[df_display['Bot_Accion'].isin(selected_actions)]
+
+        # --- NUEVA LÓGICA PARA OCULTAR COLUMNAS ---
+        # 1. Define las columnas que quieres ocultar en la web
+        columnas_a_ocultar = ['patientLast', 'patientFirst', 'DOB', 'AccNumber']
+
+        # 2. Crea una vista del DataFrame sin esas columnas
+        df_vista_web = df_display.drop(columns=columnas_a_ocultar, errors='ignore')
+
+        # 3. Muestra la nueva vista en la web
+        st.dataframe(df_vista_web)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_filename = f"PROCESADO_{timestamp}_{st.session_state['report_name']}"
