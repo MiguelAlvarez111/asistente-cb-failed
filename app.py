@@ -36,7 +36,6 @@ def get_npi_data(npi_number):
 @st.cache_data
 def load_dictionaries_by_filename(_uploaded_files):
     if not _uploaded_files: return {}
-    st.info("Cargando diccionarios...")
     dictionaries = {}
     for uploaded_file in _uploaded_files:
         filename = uploaded_file.name
@@ -48,14 +47,12 @@ def load_dictionaries_by_filename(_uploaded_files):
             elif 'Coder' in filename or 'DN35113' in filename: key_name = 'coders'
             if key_name:
                 dictionaries[key_name] = df
-                st.sidebar.write(f"✓ '{filename}' cargado como '{key_name}'.")
         except Exception as e: st.sidebar.error(f"Error al cargar '{filename}': {e}")
     return dictionaries
 
 @st.cache_data
 def parse_usap_corrections(_uploaded_files):
     if not _uploaded_files: return {}
-    st.info("Procesando correcciones de USAP...")
     corrections = {}
     for uploaded_file in _uploaded_files:
         try:
@@ -94,7 +91,6 @@ def parse_usap_corrections(_uploaded_files):
                         if instruction and (sin_val not in corrections or instruction['type'] != 'awaiting'):
                             corrections[sin_val] = instruction
         except Exception as e: st.sidebar.error(f"Error al procesar '{uploaded_file.name}': {e}")
-    st.info(f"Se encontraron {len(corrections)} instrucciones de corrección.")
     return corrections
 
 def find_provider(key, value, provider_type, dictionaries):
@@ -138,7 +134,6 @@ def process_dataframe(df, dictionaries, corrections, learned_cb_codes):
             source = "USAP Correction"; corr = corrections[sin]; corr_type = corr.get('type')
             if corr_type == 'change_ticket':
                 action = "CHANGE TICKET"; new_cb = corr.get('new_cb', '')
-                # ¡Corrección! Comprobar si new_cb existe antes de llamar a .lower()
                 if new_cb and 'add to ge' in new_cb.lower():
                     suggestion = f"Cambiar por: {corr.get('new_name', '').upper()}"
                     details = f"El nuevo proveedor (NPI: {corr.get('new_npi')}) necesita ser añadido (ADD TO GE)."
@@ -151,7 +146,6 @@ def process_dataframe(df, dictionaries, corrections, learned_cb_codes):
                     if api_info: details += f"Info API: {api_info['full_name']}"
             elif corr_type == 'simple_correction':
                 action = "COMPLETAR INFO"; npi_to_use = corr.get('new_npi') or npi; cb_to_use = corr.get('new_cb', '')
-                # ¡Corrección! Comprobar si cb_to_use existe antes de llamar a .lower()
                 if cb_to_use and 'add to ge' in cb_to_use.lower():
                     action = "AWAITING USAP"; details = f"Instrucción 'ADD TO GE' para NPI {npi_to_use}."
                 else:
@@ -199,7 +193,6 @@ def to_excel(df_dict):
 # SECCIÓN 3: INTERFAZ Y EJECUCIÓN
 # ==============================================================================
 st.title("🤖 Asistente de Reporte CB Failed")
-st.markdown("Herramienta para automatizar el análisis y la corrección del reporte diario.")
 
 st.sidebar.header("1. Cargar Archivos")
 uploaded_report = st.sidebar.file_uploader("A. Reporte CB FAILED (.xlsx)", type=['xlsx'])
@@ -234,49 +227,48 @@ if process_button:
             xls_input = pd.ExcelFile(uploaded_report)
             processed_sheets = {}
             sheet_names = xls_input.sheet_names
+            progress_bar = st.progress(0, text="Procesando pestañas...")
             for i, sheet_name in enumerate(sheet_names):
-                st.write(f"Procesando pestaña: {sheet_name} ({i+1}/{len(sheet_names)})")
                 df_sheet = pd.read_excel(xls_input, sheet_name=sheet_name, dtype=str).fillna('')
                 if not df_sheet.empty and len(df_sheet.index) >= 1:
                     df_processed = process_dataframe(df_sheet, dictionaries_data, corrections_data, learned_cb_codes)
                     processed_sheets[sheet_name] = df_processed
+                progress_bar.progress((i + 1) / len(sheet_names), text=f"Procesando pestaña: {sheet_name}")
 
             st.session_state['processed_sheets'] = processed_sheets
             st.session_state['report_name'] = uploaded_report.name
         st.success("¡Proceso completado!")
 
+# --- ¡CORRECCIÓN! Mover la sección de resultados DENTRO del bloque if process_button ---
 if 'processed_sheets' in st.session_state:
     st.header("3. Revisar y Descargar Resultados")
-    processed_sheets = st.session_state['processed_sheets']
     
-    all_actions = sorted(pd.concat(processed_sheets.values())['Bot_Accion'].unique().tolist())
-    selected_actions = st.multiselect("Filtrar por Acción del Bot:", all_actions, default=all_actions)
-    
-    tabs = st.tabs(processed_sheets.keys())
-for i, sheet_name in enumerate(processed_sheets.keys()):
-    with tabs[i]:
-        st.markdown(f"**Resultados para: {sheet_name}**")
-        df_display = processed_sheets[sheet_name]
-        if selected_actions:
-            df_display = df_display[df_display['Bot_Accion'].isin(selected_actions)]
+    processed_sheets = st.session_state.get('processed_sheets', {})
+    if not processed_sheets:
+        st.warning("No se encontraron pestañas con datos para procesar.")
+    else:
+        all_actions = sorted(pd.concat(processed_sheets.values())['Bot_Accion'].unique().tolist())
+        selected_actions = st.multiselect("Filtrar por Acción del Bot:", all_actions, default=all_actions)
+        
+        tabs = st.tabs(processed_sheets.keys())
+        for i, sheet_name in enumerate(processed_sheets.keys()):
+            with tabs[i]:
+                st.markdown(f"**Resultados para: {sheet_name}**")
+                df_display = processed_sheets[sheet_name]
+                if selected_actions:
+                    df_display = df_display[df_display['Bot_Accion'].isin(selected_actions)]
+                
+                columnas_a_ocultar = ['patientLast', 'patientFirst', 'DOB', 'AccNumber']
+                df_vista_web = df_display.drop(columns=columnas_a_ocultar, errors='ignore')
+                st.dataframe(df_vista_web)
 
-        # --- NUEVA LÓGICA PARA OCULTAR COLUMNAS ---
-        # 1. Define las columnas que quieres ocultar en la web
-        columnas_a_ocultar = ['patientLast', 'patientFirst', 'DOB', 'AccNumber']
-
-        # 2. Crea una vista del DataFrame sin esas columnas
-        df_vista_web = df_display.drop(columns=columnas_a_ocultar, errors='ignore')
-
-        # 3. Muestra la nueva vista en la web
-        st.dataframe(df_vista_web)
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_filename = f"PROCESADO_{timestamp}_{st.session_state['report_name']}"
-    excel_data = to_excel(processed_sheets)
-    
-    st.download_button(
-        label="📥 Descargar Reporte Procesado (.xlsx)",
-        data=excel_data,
-        file_name=output_filename,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_filename = f"PROCESADO_{timestamp}_{st.session_state['report_name']}"
+        excel_data = to_excel(processed_sheets)
+        
+        st.download_button(
+            label="📥 Descargar Reporte Procesado (.xlsx)",
+            data=excel_data,
+            file_name=output_filename,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
