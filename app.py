@@ -138,7 +138,8 @@ def process_dataframe(df, dictionaries, corrections, learned_cb_codes):
             source = "USAP Correction"; corr = corrections[sin]; corr_type = corr.get('type')
             if corr_type == 'change_ticket':
                 action = "CHANGE TICKET"; new_cb = corr.get('new_cb', '')
-                if 'add to ge' in new_cb.lower():
+                # ¡Corrección! Comprobar si new_cb existe antes de llamar a .lower()
+                if new_cb and 'add to ge' in new_cb.lower():
                     suggestion = f"Cambiar por: {corr.get('new_name', '').upper()}"
                     details = f"El nuevo proveedor (NPI: {corr.get('new_npi')}) necesita ser añadido (ADD TO GE)."
                 else:
@@ -150,7 +151,8 @@ def process_dataframe(df, dictionaries, corrections, learned_cb_codes):
                     if api_info: details += f"Info API: {api_info['full_name']}"
             elif corr_type == 'simple_correction':
                 action = "COMPLETAR INFO"; npi_to_use = corr.get('new_npi') or npi; cb_to_use = corr.get('new_cb', '')
-                if 'add to ge' in cb_to_use.lower():
+                # ¡Corrección! Comprobar si cb_to_use existe antes de llamar a .lower()
+                if cb_to_use and 'add to ge' in cb_to_use.lower():
                     action = "AWAITING USAP"; details = f"Instrucción 'ADD TO GE' para NPI {npi_to_use}."
                 else:
                     suggestion = f"Agregar/Corregir NPI: {npi_to_use}, CBCode: {cb_to_use}"
@@ -180,9 +182,9 @@ def process_dataframe(df, dictionaries, corrections, learned_cb_codes):
 
     type_order = ['Surgeon', 'Provider', 'RCM', 'Coder']
     if 'Type' in df.columns:
-        df['Type'] = pd.Categorical(df['Type'], categories=type_order, ordered=True)
-        df_sorted = df.sort_values(by=['Type', 'Last - Title'], ascending=True, na_position='first')
-        return df_sorted
+      df['Type'] = pd.Categorical(df['Type'], categories=type_order, ordered=True)
+      df_sorted = df.sort_values(by=['Type', 'Last - Title'], ascending=True, na_position='first')
+      return df_sorted
     return df
 
 def to_excel(df_dict):
@@ -211,11 +213,11 @@ if process_button:
     if not uploaded_report or not uploaded_dictionaries:
         st.error("Por favor, carga el reporte principal y los diccionarios.")
     else:
-        with st.spinner("Procesando... Esto puede tomar un minuto."):
+        with st.spinner("Procesando..."):
             dictionaries_data = load_dictionaries_by_filename(uploaded_dictionaries)
             corrections_data = parse_usap_corrections(uploaded_corrections)
             
-            st.info("Aprendiendo CB Codes de correcciones simples...")
+            st.info("Aprendiendo CB Codes...")
             learned_cb_codes = {}
             try:
                 temp_df_all_sheets = pd.concat(pd.read_excel(uploaded_report, sheet_name=None, dtype=str).values(), ignore_index=True).fillna('')
@@ -226,12 +228,14 @@ if process_button:
                             npi = str(original_row.iloc[0].get('NPI', '')).replace('.0', '').strip()
                             if npi and npi != 'nan':
                                 learned_cb_codes[npi] = corr['new_cb']
-                st.info(f"Se aprendieron {len(learned_cb_codes)} nuevos CB Codes para aplicar globalmente.")
+                st.info(f"Se aprendieron {len(learned_cb_codes)} nuevos CB Codes.")
             except Exception as e: st.warning(f"No se pudo leer el reporte para aprendizaje: {e}")
 
             xls_input = pd.ExcelFile(uploaded_report)
             processed_sheets = {}
-            for sheet_name in xls_input.sheet_names:
+            sheet_names = xls_input.sheet_names
+            for i, sheet_name in enumerate(sheet_names):
+                st.write(f"Procesando pestaña: {sheet_name} ({i+1}/{len(sheet_names)})")
                 df_sheet = pd.read_excel(xls_input, sheet_name=sheet_name, dtype=str).fillna('')
                 if not df_sheet.empty and len(df_sheet.index) >= 1:
                     df_processed = process_dataframe(df_sheet, dictionaries_data, corrections_data, learned_cb_codes)
