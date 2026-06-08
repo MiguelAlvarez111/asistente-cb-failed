@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.env
+.venv/
+venv/
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+.DS_Store
+/tmp/
+*.xlsx
+*.xls
+*.txt
+!requirements.txt
