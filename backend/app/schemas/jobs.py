@@ -2,6 +2,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 
+from backend.app.schemas.files import FileKind
+
 
 class JobStatus(StrEnum):
     QUEUED = "QUEUED"
@@ -22,6 +24,7 @@ class JobCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     upload_id: str
+    file_overrides: dict[str, FileKind] = {}
 
 
 class JobCreateResponse(BaseModel):

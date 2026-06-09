@@ -9,6 +9,7 @@ class FileKind(StrEnum):
     CB_FAILED_REPORT = "CB_FAILED_REPORT"
     CORRECTIONS = "CORRECTIONS"
     DICTIONARY = "DICTIONARY"
+    IGNORE = "IGNORE"
     UNKNOWN = "UNKNOWN"
 
 
@@ -32,4 +33,3 @@ class UploadInspectionResponse(BaseModel):
     upload_id: str
     files: list[FileInspection]
     warnings: list[str]
-

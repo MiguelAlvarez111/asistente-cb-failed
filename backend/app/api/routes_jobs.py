@@ -7,11 +7,29 @@ from backend.app.core.security import require_auth
 from backend.app.repositories.feedback_repository import feedback_repository
 from backend.app.repositories.job_repository import job_repository
 from backend.app.repositories.work_status_repository import work_status_repository
+from backend.app.schemas.files import FileKind
 from backend.app.schemas.jobs import FeedbackRequest, JobCreateRequest, JobCreateResponse, JobStatus, JobStatusResponse, WorkStatusRequest, WorkStatusResponse
 from backend.app.services.job_runner import BackgroundTasksJobRunner
 from backend.app.services.report_processor import report_processor
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"], dependencies=[Depends(require_auth)])
+
+
+OVERRIDABLE_KINDS = {FileKind.CB_FAILED_REPORT, FileKind.CORRECTIONS, FileKind.DICTIONARY, FileKind.IGNORE}
+
+
+def _apply_file_overrides(payload: JobCreateRequest) -> None:
+    upload = job_repository.get_upload(payload.upload_id)
+    if not upload:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload not found or expired")
+    files_by_id = {item.file_id: item for item in upload.files}
+    for file_id, kind in payload.file_overrides.items():
+        if file_id not in files_by_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown file_id override: {file_id}")
+        if kind not in OVERRIDABLE_KINDS:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unsupported file type override: {kind}")
+        stored = files_by_id[file_id]
+        stored.inspection = stored.inspection.model_copy(update={"kind": kind})
 
 
 @router.post("", response_model=JobCreateResponse)
@@ -23,6 +41,7 @@ def create_job(
     upload = job_repository.get_upload(payload.upload_id)
     if not upload:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload not found or expired")
+    _apply_file_overrides(payload)
     job_id = secrets.token_urlsafe(24)
     job_dir = settings.temp_root / "jobs" / job_id
     job_dir.mkdir(parents=True, exist_ok=False)

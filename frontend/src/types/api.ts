@@ -1,10 +1,11 @@
 export type JobStatus = "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED" | "EXPIRED";
 export type WorkStatus = "Pending" | "Copied" | "Applied" | "Skipped";
+export type FileKind = "CB_FAILED_REPORT" | "CORRECTIONS" | "DICTIONARY" | "IGNORE" | "UNKNOWN";
 
 export type FileInspection = {
   file_id: string;
   filename: string;
-  kind: string;
+  kind: FileKind;
   row_count: number;
   column_count: number;
   columns_found: string[];

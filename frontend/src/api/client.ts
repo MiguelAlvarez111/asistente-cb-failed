@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { JobStatusResponse, RowDetail, RowResult, SINLookupResponse, UploadInspectionResponse, WorkStatus } from "../types/api";
+import type { FileKind, JobStatusResponse, RowDetail, RowResult, SINLookupResponse, UploadInspectionResponse, WorkStatus } from "../types/api";
 
 export const api = axios.create({
   baseURL: "",
@@ -28,8 +28,8 @@ export async function inspectUploads(files: File[]) {
   return data;
 }
 
-export async function createJob(uploadId: string) {
-  const { data } = await api.post<{ job_id: string; status: string }>("/api/jobs", { upload_id: uploadId });
+export async function createJob(uploadId: string, fileOverrides: Record<string, FileKind>) {
+  const { data } = await api.post<{ job_id: string; status: string }>("/api/jobs", { upload_id: uploadId, file_overrides: fileOverrides });
   return data;
 }
 
