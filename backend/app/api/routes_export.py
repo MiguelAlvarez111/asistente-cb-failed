@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/export", tags=["export"], dependencies=[Depends(
 @router.get("/{job_id}")
 def export_job(
     job_id: str,
-    kind: str = Query("full", pattern="^(full|manual_review|high_confidence|summary)$"),
+    kind: str = Query("full", pattern="^(full|manual_review|high_confidence|summary|apply_ready|usap|numbers_ready)$"),
 ) -> Response:
     job = job_repository.get_job(job_id)
     if not job:
@@ -31,4 +31,3 @@ def export_job(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
-

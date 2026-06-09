@@ -9,6 +9,7 @@ from backend.app.core.config import Settings, get_settings
 from backend.app.schemas.files import FileInspection
 from backend.app.schemas.jobs import JobStatus, JobSummary
 from backend.app.schemas.results import RowDetail
+from backend.app.repositories.work_status_repository import work_status_repository
 
 
 @dataclass
@@ -96,6 +97,7 @@ class JobRepository:
         for job_id, job in list(self.jobs.items()):
             if job.created_at < cutoff:
                 shutil.rmtree(job.temp_dir, ignore_errors=True)
+                work_status_repository.clear(job_id)
                 job.status = JobStatus.EXPIRED
                 self.jobs.pop(job_id, None)
                 removed += 1
@@ -106,10 +108,10 @@ class JobRepository:
         if not job:
             return
         shutil.rmtree(job.temp_dir, ignore_errors=True)
+        work_status_repository.clear(job_id)
         upload = self.uploads.pop(job.upload_id, None)
         if upload:
             shutil.rmtree(upload.temp_dir, ignore_errors=True)
 
 
 job_repository = JobRepository()
-

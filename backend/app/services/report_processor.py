@@ -15,6 +15,7 @@ from backend.app.schemas.jobs import JobStatus, JobSummary
 from backend.app.schemas.results import RowDetail
 from backend.app.services.ai_interpreter import AIInterpreter
 from backend.app.services.column_normalizer import normalize_dataframe
+from backend.app.services.correction_builder import CorrectionBuilder
 from backend.app.services.correction_parser import parse_corrections
 from backend.app.services.decision_engine import choose_final_action
 from backend.app.services.deterministic_interpreter import interpret_row
@@ -44,6 +45,7 @@ class ReportProcessor:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self.ai = AIInterpreter(self.settings)
+        self.correction_builder = CorrectionBuilder()
 
     def process(self, job_id: str, upload_id: str) -> None:
         started = perf_counter()
@@ -100,20 +102,31 @@ class ReportProcessor:
                             if ai_interpretation.confidence < self.settings.ai_confidence_auto_accept_threshold:
                                 selected.needs_manual_review = True
 
-                        validation = validate_interpretation(selected, dictionary_index)
+                        validation = validate_interpretation(selected, dictionary_index, row_dict)
                         final_action, recommendation, needs_review = choose_final_action(selected, validation)
-                        first_match = validation.matches[0] if validation.matches else None
+                        instruction = self.correction_builder.build(
+                            row_dict,
+                            selected,
+                            validation,
+                            final_action,
+                            recommendation,
+                            needs_review,
+                        )
+                        first_match = validation.effective_match or (validation.matches[0] if validation.matches else None)
                         result = RowDetail(
                             row_id=f"{sheet_name}-{row_index}",
                             sheet_name=sheet_name,
+                            SIN=sin,
+                            Region=sheet_name,
+                            Row_Index=int(row_index) + 2,
                             sanitized_original=sanitize_row(row_dict),
-                            Bot_Accion=final_action.value,
-                            Bot_Suggestion=recommendation,
+                            Bot_Accion=instruction.action.value,
+                            Bot_Suggestion=instruction.correction_summary,
                             Bot_Details=validation.details,
                             AI_Action=ai_interpretation.action.value,
                             AI_Reason_Code=ai_interpretation.reason_code.value,
                             AI_Confidence=ai_interpretation.confidence,
-                            Needs_Manual_Review=needs_review,
+                            Needs_Manual_Review=instruction.needs_manual_review,
                             Validation_Status=validation.status.value,
                             Validation_Details=validation.details,
                             Dictionary_Match_Type=first_match.match_type if first_match else None,
@@ -123,8 +136,30 @@ class ReportProcessor:
                             Matched_Provider_Name=first_match.provider_name if first_match else None,
                             Deactivation_Status=first_match.deactivation_status if first_match else None,
                             AI_Explanation=ai_interpretation.explanation,
-                            Final_Action=final_action.value,
-                            Final_Recommendation=recommendation,
+                            Final_Action=instruction.action.value,
+                            Final_Recommendation=instruction.analyst_next_step,
+                            Quick_Action=instruction.display_label,
+                            Apply_This=instruction.apply_this,
+                            Current_Last_Title=instruction.current_last_title,
+                            Current_First=instruction.current_first,
+                            Current_NPI=instruction.current_npi,
+                            Current_CBCode=instruction.current_cbcode,
+                            Recommended_Last_Title=instruction.recommended_last_title,
+                            Recommended_First=instruction.recommended_first,
+                            Recommended_NPI=instruction.recommended_npi,
+                            Recommended_CBCode=instruction.recommended_cbcode,
+                            Recommended_Comments=instruction.recommended_comments,
+                            Recommended_Source=instruction.recommended_source,
+                            Correction_Summary=instruction.correction_summary,
+                            Analyst_Next_Step=instruction.analyst_next_step,
+                            Manual_Reason=instruction.manual_reason,
+                            Cell_Color_Last_Title=instruction.cell_color_last_title,
+                            Cell_Color_First=instruction.cell_color_first,
+                            Cell_Color_NPI=instruction.cell_color_npi,
+                            Cell_Color_CBCode=instruction.cell_color_cbcode,
+                            Cell_Color_Comments=instruction.cell_color_comments,
+                            Cell_Color_Source=instruction.cell_color_source,
+                            correction_instruction=instruction,
                             deterministic_interpretation=deterministic,
                             ai_interpretation=ai_interpretation,
                             validation=validation,
@@ -182,12 +217,14 @@ class ReportProcessor:
     def _summary(self, rows: list[RowDetail], ai_rows: int) -> JobSummary:
         final_counts = Counter(row.Final_Action for row in rows)
         confidence_counts = Counter(_confidence_bucket(row.AI_Confidence) for row in rows)
+        work_status_counts = Counter(row.Work_Status.value for row in rows)
         return JobSummary(
             total_rows=len(rows),
             malformed_rows=final_counts.get("MALFORMED_ROW", 0),
             ignored_rows=0,
             final_action_counts=dict(final_counts),
             confidence_counts=dict(confidence_counts),
+            work_status_counts=dict(work_status_counts),
             manual_review_count=sum(1 for row in rows if row.Needs_Manual_Review),
             ai_rows_count=ai_rows,
         )

@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
+import re
+from typing import Any
 
 import pandas as pd
 
@@ -30,6 +32,31 @@ def load_dictionary(path: Path, filename: str) -> LoadedDictionary | None:
 def _provider_name(row: pd.Series) -> str:
     parts = [row.get("last_name", ""), row.get("first_name", ""), row.get("middle_name", "")]
     return " ".join(part for part in parts if part).strip() or str(row.get("name", "")).strip()
+
+
+def _normalize_match_value(value: Any) -> str:
+    text = re.sub(r"[^A-Z0-9]+", " ", str(value or "").upper()).strip()
+    return " ".join(text.split())
+
+
+def _effective_key(match: DictionaryMatch) -> tuple[str, str, str]:
+    return (
+        _normalize_match_value(match.npi),
+        _normalize_match_value(match.cbcode),
+        _normalize_match_value(match.provider_name),
+    )
+
+
+def _context_score(match: DictionaryMatch, row: dict[str, Any] | None) -> int:
+    if not row:
+        return 0
+    context = _normalize_match_value(" ".join(str(row.get(key, "") or "") for key in ["practice", "facility", "type"]))
+    score = 0
+    for value in [match.ba_mnemonic, match.division, match.dictionary_name]:
+        token = _normalize_match_value(value)
+        if token and token in context:
+            score += 1
+    return score
 
 
 def _to_match(dictionary: LoadedDictionary, row: pd.Series, match_type: str) -> DictionaryMatch:
@@ -70,3 +97,26 @@ class DictionaryIndex:
             unique[(match.dictionary_name, match.npi, match.cbcode)] = match
         return list(unique.values())
 
+
+def resolve_effective_matches(matches: list[DictionaryMatch], row: dict[str, Any] | None = None) -> list[DictionaryMatch]:
+    exact_unique: dict[tuple[str, str | None, str | None, str | None], DictionaryMatch] = {}
+    for match in matches:
+        exact_unique[(match.dictionary_name, match.npi, match.cbcode, match.provider_name)] = match
+    unique_matches = list(exact_unique.values())
+    if len(unique_matches) <= 1:
+        return unique_matches
+
+    effective_keys = {_effective_key(match) for match in unique_matches}
+    if len(effective_keys) == 1:
+        return [unique_matches[0]]
+
+    scored = [(_context_score(match, row), match) for match in unique_matches]
+    max_score = max(score for score, _ in scored)
+    if max_score > 0:
+        best = [match for score, match in scored if score == max_score]
+        if len(best) == 1:
+            return best
+        if len({_effective_key(match) for match in best}) == 1:
+            return [best[0]]
+
+    return unique_matches

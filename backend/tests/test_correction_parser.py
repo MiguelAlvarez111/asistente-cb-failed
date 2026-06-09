@@ -15,3 +15,8 @@ def test_add_to_ge_parsing() -> None:
     assert result.requires_add_to_ge is True
     assert result.target_npi == "1234567890"
 
+
+def test_remove_from_ticket_parsing() -> None:
+    result = interpret_row({"npi": "", "cbcode": "", "comments": "Remove from the ticket"})
+    assert result.action == AIAction.REMOVE_FROM_TICKET
+    assert result.reason_code == AIReasonCode.REMOVE_FROM_TICKET

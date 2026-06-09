@@ -11,6 +11,13 @@ class JobStatus(StrEnum):
     EXPIRED = "EXPIRED"
 
 
+class RowWorkStatus(StrEnum):
+    PENDING = "Pending"
+    COPIED = "Copied"
+    APPLIED = "Applied"
+    SKIPPED = "Skipped"
+
+
 class JobCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -32,6 +39,7 @@ class JobSummary(BaseModel):
     ignored_rows: int = 0
     final_action_counts: dict[str, int] = {}
     confidence_counts: dict[str, int] = {}
+    work_status_counts: dict[str, int] = {}
     manual_review_count: int = 0
     ai_rows_count: int = 0
 
@@ -53,3 +61,15 @@ class FeedbackRequest(BaseModel):
     manual_correction: str | None = None
     note: str | None = None
 
+
+class WorkStatusRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: RowWorkStatus
+
+
+class WorkStatusResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    row_id: str
+    status: RowWorkStatus

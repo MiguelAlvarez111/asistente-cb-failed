@@ -44,6 +44,34 @@ def interpret_row(row: dict[str, str]) -> AIInterpretation:
     if any(MALFORMED_RE.match(value) for value in [npi_field, cbcode_field, comments]):
         return _make(AIAction.MANUAL_REVIEW, AIReasonCode.MALFORMED_ROW, confidence=1, review=True, explanation="Malformed line marker.")
 
+    if "ff provider override" in lower:
+        return _make(
+            AIAction.AWAITING_USAP,
+            AIReasonCode.FF_PROVIDER_OVERRIDE,
+            pending=True,
+            confidence=1,
+            explanation="FF Provider Override requires USAP confirmation.",
+        )
+
+    remove_hints = [
+        "remove from the ticket",
+        "remove from ticket",
+        "remove provider from ticket",
+        "rn/internal audit",
+        "rn internal audit",
+        "rn audit",
+        "internal audit",
+    ]
+    if any(hint in lower for hint in remove_hints):
+        reason = AIReasonCode.RN_INTERNAL_AUDIT if "audit" in lower else AIReasonCode.REMOVE_FROM_TICKET
+        return _make(
+            AIAction.REMOVE_FROM_TICKET,
+            reason,
+            confidence=0.95,
+            review=True,
+            explanation="Remove-from-ticket instruction detected.",
+        )
+
     add_to_ge_match = re.search(r"add\s+to\s+ge(?:\s+(?P<npi>\d{10}))?", lower, re.IGNORECASE)
     if add_to_ge_match:
         return _make(
@@ -93,6 +121,18 @@ def interpret_row(row: dict[str, str]) -> AIInterpretation:
             explanation="Correct provider with NPI instruction detected.",
         )
 
+    if "change in the ticket" in lower:
+        target_npi = npi_field if npi_field.isdigit() else None
+        return _make(
+            AIAction.CHANGE_TICKET,
+            AIReasonCode.CHANGE_IN_TICKET,
+            npi=target_npi,
+            cbcode=cbcode_field or None,
+            confidence=0.85 if (target_npi or cbcode_field) else 0.55,
+            review=not bool(target_npi or cbcode_field),
+            explanation="Change-in-ticket instruction detected.",
+        )
+
     if cbcode_field:
         return _make(AIAction.COMPLETE_INFO, AIReasonCode.DIRECT_CBCODE, cbcode=cbcode_field, confidence=0.9, explanation="Direct CBCode value present.")
     if npi_field and npi_field.isdigit():
@@ -105,4 +145,3 @@ def interpret_row(row: dict[str, str]) -> AIInterpretation:
         review=True,
         explanation="No deterministic instruction found.",
     )
-

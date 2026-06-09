@@ -55,7 +55,11 @@ class AIInterpreter:
                             "role": "system",
                             "content": (
                                 "Interpret CB Failed operational correction comments. "
-                                "Use only the sanitized fields provided. Return strict JSON only."
+                                "Rules and dictionaries run before and after you. "
+                                "Use only the sanitized fields provided. "
+                                "Do not invent NPI, CBCode, provider names, sources, or recommended values. "
+                                "Only extract values explicitly present in the text; downstream validation decides final recommendations. "
+                                "Return strict JSON only."
                             ),
                         },
                         {"role": "user", "content": json.dumps(payload, ensure_ascii=True)},

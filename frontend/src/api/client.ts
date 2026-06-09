@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { JobStatusResponse, RowDetail, RowResult, UploadInspectionResponse } from "../types/api";
+import type { JobStatusResponse, RowDetail, RowResult, SINLookupResponse, UploadInspectionResponse, WorkStatus } from "../types/api";
 
 export const api = axios.create({
   baseURL: "",
@@ -48,6 +48,16 @@ export async function getRowDetail(jobId: string, rowId: string) {
   return data;
 }
 
+export async function lookupSin(jobId: string, sin: string) {
+  const { data } = await api.get<SINLookupResponse>(`/api/results/${jobId}/lookup`, { params: { sin } });
+  return data;
+}
+
+export async function updateWorkStatus(jobId: string, rowId: string, status: WorkStatus) {
+  const { data } = await api.put<{ row_id: string; status: WorkStatus }>(`/api/jobs/${jobId}/rows/${rowId}/work-status`, { status });
+  return data;
+}
+
 export async function submitFeedback(jobId: string, rowId: string, status: string, note?: string) {
   const { data } = await api.post(`/api/jobs/${jobId}/feedback/${rowId}`, {
     status,
@@ -57,7 +67,8 @@ export async function submitFeedback(jobId: string, rowId: string, status: strin
   return data;
 }
 
-export function exportUrl(jobId: string, kind: "full" | "manual_review" | "high_confidence" | "summary") {
+export type ExportKind = "full" | "manual_review" | "high_confidence" | "summary" | "apply_ready" | "usap" | "numbers_ready";
+
+export function exportUrl(jobId: string, kind: ExportKind) {
   return `/api/export/${jobId}?kind=${kind}`;
 }
-
