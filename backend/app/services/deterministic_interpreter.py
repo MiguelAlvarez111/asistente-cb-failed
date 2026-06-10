@@ -6,6 +6,14 @@ from backend.app.schemas.ai import AIAction, AIInterpretation, AIReasonCode
 MALFORMED_RE = re.compile(r"^\s*line\s+\d+\s*:?\s*$", re.IGNORECASE)
 
 
+def _target_cbcode(value: str) -> str | None:
+    text = value.strip()
+    lower = text.lower()
+    if not text or "awaiting" in lower or "pending" in lower or "add to ge" in lower:
+        return None
+    return text
+
+
 def _make(
     action: AIAction,
     reason_code: AIReasonCode,
@@ -83,23 +91,18 @@ def interpret_row(row: dict[str, str]) -> AIInterpretation:
             explanation="ADD TO GE instruction detected.",
         )
 
-    if "pending" in lower:
-        return _make(AIAction.AWAITING_USAP, AIReasonCode.PENDING_USAP, pending=True, confidence=1, explanation="Pending USAP confirmation.")
-    if "awaiting" in lower:
-        return _make(AIAction.AWAITING_USAP, AIReasonCode.AWAITING_USAP, pending=True, confidence=1, explanation="Awaiting USAP confirmation.")
-
     chg_match = re.search(r"chg\s+to\s+(?P<name>.+)", npi_field, re.IGNORECASE) or re.search(r"chg\s+to\s+(?P<name>.+)", comments, re.IGNORECASE)
     if chg_match:
         return _make(
             AIAction.CHANGE_TICKET,
             AIReasonCode.CHG_TO,
             provider_name=chg_match.group("name").strip(),
-            cbcode=cbcode_field or None,
+            cbcode=_target_cbcode(cbcode_field),
             confidence=0.95,
             explanation="CHG TO provider instruction detected.",
         )
 
-    cb_match = re.search(r"correct provider (?P<name>.*?) with cb\s*code (?P<cb>[A-Za-z0-9_-]+)", comments, re.IGNORECASE)
+    cb_match = re.search(r"(?:correct|pending addition of correct)\s+provider\s+(?P<name>.*?)\s+with\s+cb\s*code\s+(?P<cb>[A-Za-z0-9_-]+)", comments, re.IGNORECASE)
     if cb_match:
         return _make(
             AIAction.CHANGE_TICKET,
@@ -110,7 +113,7 @@ def interpret_row(row: dict[str, str]) -> AIInterpretation:
             explanation="Correct provider with CBCode instruction detected.",
         )
 
-    npi_match = re.search(r"correct provider (?P<name>.*?) with npi (?P<npi>\d{10})", comments, re.IGNORECASE)
+    npi_match = re.search(r"(?:correct|pending addition of correct)\s+provider\s+(?P<name>.*?)\s+with\s+npi\s+(?P<npi>\d{10})", comments, re.IGNORECASE)
     if npi_match:
         return _make(
             AIAction.CHANGE_TICKET,
@@ -121,17 +124,34 @@ def interpret_row(row: dict[str, str]) -> AIInterpretation:
             explanation="Correct provider with NPI instruction detected.",
         )
 
+    correct_npi_cb_match = re.search(r"correct\s+npi\s+(?P<npi>\d{10})\s+with\s+cb\s*code\s+(?P<cb>[A-Za-z0-9_-]+)", comments, re.IGNORECASE)
+    if correct_npi_cb_match:
+        return _make(
+            AIAction.CHANGE_TICKET,
+            AIReasonCode.CORRECT_PROVIDER_NPI,
+            npi=correct_npi_cb_match.group("npi").strip(),
+            cbcode=correct_npi_cb_match.group("cb").strip(),
+            confidence=1,
+            explanation="Correct NPI with CBCode instruction detected.",
+        )
+
     if "change in the ticket" in lower:
         target_npi = npi_field if npi_field.isdigit() else None
+        target_cbcode = _target_cbcode(cbcode_field)
         return _make(
             AIAction.CHANGE_TICKET,
             AIReasonCode.CHANGE_IN_TICKET,
             npi=target_npi,
-            cbcode=cbcode_field or None,
-            confidence=0.85 if (target_npi or cbcode_field) else 0.55,
-            review=not bool(target_npi or cbcode_field),
+            cbcode=target_cbcode,
+            confidence=0.85 if (target_npi or target_cbcode) else 0.55,
+            review=not bool(target_npi or target_cbcode),
             explanation="Change-in-ticket instruction detected.",
         )
+
+    if "pending" in lower:
+        return _make(AIAction.AWAITING_USAP, AIReasonCode.PENDING_USAP, pending=True, confidence=1, explanation="Pending USAP confirmation.")
+    if "awaiting" in lower:
+        return _make(AIAction.AWAITING_USAP, AIReasonCode.AWAITING_USAP, pending=True, confidence=1, explanation="Awaiting USAP confirmation.")
 
     if cbcode_field:
         return _make(AIAction.COMPLETE_INFO, AIReasonCode.DIRECT_CBCODE, cbcode=cbcode_field, confidence=0.9, explanation="Direct CBCode value present.")

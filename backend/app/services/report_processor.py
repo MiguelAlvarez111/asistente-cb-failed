@@ -9,7 +9,7 @@ from backend.app.core.config import Settings, get_settings
 from backend.app.repositories.audit_repository import audit_repository
 from backend.app.repositories.feedback_repository import feedback_repository
 from backend.app.repositories.job_repository import JobRecord, job_repository
-from backend.app.schemas.ai import AIInterpretation
+from backend.app.schemas.ai import AIAction, AIInterpretation
 from backend.app.schemas.files import FileKind
 from backend.app.schemas.jobs import JobStatus, JobSummary
 from backend.app.schemas.results import RowDetail
@@ -39,6 +39,37 @@ def _apply_output(row: dict[str, str], result: RowDetail) -> dict[str, str]:
     for column in OUTPUT_COLUMNS:
         output[column] = str(getattr(result, column))
     return output
+
+
+CONCRETE_CORRECTION_ACTIONS = {
+    AIAction.CHANGE_TICKET,
+    AIAction.COMPLETE_INFO,
+    AIAction.ADD_TO_GE,
+    AIAction.REMOVE_FROM_TICKET,
+}
+
+
+def _is_concrete_correction(interpretation: AIInterpretation) -> bool:
+    return (
+        interpretation.action in CONCRETE_CORRECTION_ACTIONS
+        or bool(interpretation.target_provider_name)
+        or bool(interpretation.target_npi)
+        or bool(interpretation.target_cbcode)
+    )
+
+
+def _should_replace_correction(existing: AIInterpretation | None, incoming: AIInterpretation) -> bool:
+    if existing is None:
+        return True
+
+    existing_concrete = _is_concrete_correction(existing)
+    incoming_concrete = _is_concrete_correction(incoming)
+
+    if incoming_concrete and not existing_concrete:
+        return True
+    if existing_concrete and not incoming_concrete:
+        return False
+    return True
 
 
 class ReportProcessor:
@@ -211,7 +242,10 @@ class ReportProcessor:
         corrections: dict[str, AIInterpretation] = {}
         for item in files:
             if item.inspection.kind == FileKind.CORRECTIONS:
-                corrections.update(parse_corrections(Path(item.path)))
+                parsed = parse_corrections(Path(item.path))
+                for sin, interpretation in parsed.items():
+                    if _should_replace_correction(corrections.get(sin), interpretation):
+                        corrections[sin] = interpretation
         return corrections
 
     def _summary(self, rows: list[RowDetail], ai_rows: int) -> JobSummary:
