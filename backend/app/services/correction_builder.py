@@ -168,6 +168,28 @@ class CorrectionBuilder:
                 )
                 instruction.source_priority = "Dictionary"
                 return instruction
+            if interpretation.is_pending_usap and (interpretation.target_provider_name or interpretation.target_npi):
+                recommended_last, recommended_first = _split_provider_name(interpretation.target_provider_name)
+                instruction.apply_this = "YES"
+                instruction.needs_manual_review = False
+                instruction.cell_color_last_title = "red" if recommended_last else "gray"
+                instruction.cell_color_first = "red" if recommended_first else "gray"
+                instruction.cell_color_npi = "red" if interpretation.target_npi else "gray"
+                instruction.cell_color_cbcode = "yellow"
+                instruction.cell_color_comments = "red"
+                instruction.cell_color_source = "green"
+                instruction.recommended_last_title = recommended_last
+                instruction.recommended_first = recommended_first
+                instruction.recommended_npi = _clean(interpretation.target_npi)
+                instruction.recommended_cbcode = AWAITING_USAP_CBCODE
+                instruction.recommended_comments = "Change in the ticket"
+                instruction.recommended_source = "USAP"
+                instruction.correction_summary = "Change ticket with USAP correction; CBCode is awaiting creation."
+                instruction.analyst_next_step = (
+                    "Apply the change-ticket correction and keep CBCode as awaiting USAP confirmation."
+                )
+                instruction.source_priority = "USAP"
+                return instruction
             instruction.action = FinalAction.MANUAL_REVIEW
             instruction.display_label = DISPLAY_LABELS[FinalAction.MANUAL_REVIEW]
             _set_all_colors(instruction, "yellow")

@@ -121,6 +121,13 @@ function fullCorrectionMatch(match: SINLookupMatch) {
 }
 
 function trustLine(match: SINLookupMatch) {
+  if (
+    match.final_action === "CHANGE_TICKET" &&
+    match.recommended.source === "USAP" &&
+    match.recommended.cbcode.toLowerCase().includes("awaiting")
+  ) {
+    return "USAP change ticket; CBCode awaiting creation";
+  }
   if (match.final_action === "CHANGE_TICKET") return "Change target validated in dictionary";
   if (match.final_action === "COMPLETE_INFO") {
     return match.recommended.cbcode ? `Dictionary validated CBCode ${match.recommended.cbcode}` : "Dictionary validated correction";

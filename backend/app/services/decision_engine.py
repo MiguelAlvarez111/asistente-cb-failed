@@ -18,7 +18,7 @@ def choose_final_action(interpretation: AIInterpretation, validation: Validation
     } and validation.matches:
         return FinalAction.CHANGE_TICKET, "Change ticket with validated target provider.", False
     if interpretation.action == AIAction.CHANGE_TICKET and interpretation.is_pending_usap:
-        return FinalAction.AWAITING_USAP, "USAP correction received; awaiting CBCode.", False
+        return FinalAction.CHANGE_TICKET, "Change ticket with USAP correction; CBCode is awaiting creation.", False
     if interpretation.is_pending_usap or interpretation.action == AIAction.AWAITING_USAP:
         return FinalAction.AWAITING_USAP, "Await USAP confirmation.", False
     if interpretation.action == AIAction.CHANGE_TICKET:

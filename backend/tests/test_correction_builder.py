@@ -224,7 +224,7 @@ def test_remove_from_ticket_instruction() -> None:
     assert instruction.recommended_comments == "Remove from the ticket"
 
 
-def test_pending_usap_correction_with_npi_but_no_cbcode_stays_awaiting(monkeypatch) -> None:
+def test_pending_usap_change_ticket_with_npi_but_no_cbcode_is_ready_to_apply(monkeypatch) -> None:
     monkeypatch.setattr("backend.app.services.validator.get_npi_data", lambda npi: {"full_name": "COLE JUSTIN", "npi": npi})
     row = {
         "type": "Surgeon",
@@ -239,8 +239,9 @@ def test_pending_usap_correction_with_npi_but_no_cbcode_stays_awaiting(monkeypat
     instruction, validation = _run(row, DictionaryIndex([]))
 
     assert validation.status == ValidationStatus.NPI_FOUND
-    assert instruction.action == FinalAction.AWAITING_USAP
-    assert instruction.apply_this == "NO"
+    assert instruction.action == FinalAction.CHANGE_TICKET
+    assert instruction.apply_this == "YES"
+    assert instruction.needs_manual_review is False
     assert instruction.current_type == "Surgeon"
     assert instruction.recommended_type == "Surgeon"
     assert instruction.recommended_last_title == "COLE"
@@ -249,7 +250,10 @@ def test_pending_usap_correction_with_npi_but_no_cbcode_stays_awaiting(monkeypat
     assert instruction.recommended_cbcode == AWAITING_USAP_CBCODE
     assert instruction.recommended_comments == "Change in the ticket"
     assert instruction.recommended_source == "USAP"
-    assert instruction.correction_summary == "USAP correction received; awaiting CBCode."
+    assert instruction.cell_color_cbcode == "yellow"
+    assert instruction.cell_color_comments == "red"
+    assert instruction.cell_color_source == "green"
+    assert instruction.correction_summary == "Change ticket with USAP correction; CBCode is awaiting creation."
 
 
 def test_surgeon_does_not_auto_apply_provider_dictionary_match(monkeypatch) -> None:
