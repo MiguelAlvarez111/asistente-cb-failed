@@ -978,7 +978,7 @@ function ReviewSheet({
         ))}
       </div>
       <div className="max-h-[640px] overflow-auto rounded border border-line">
-        <table className="min-w-[1710px] table-fixed text-left text-xs">
+        <table className="min-w-[1780px] table-fixed text-left text-xs">
           <colgroup>
             <col style={{ width: 230 }} />
             <col style={{ width: 82 }} />
@@ -989,6 +989,7 @@ function ReviewSheet({
             <col style={{ width: 260 }} />
             <col style={{ width: 220 }} />
             <col style={{ width: 150 }} />
+            <col style={{ width: 70 }} />
           </colgroup>
           <thead className="sticky top-0 z-10 bg-field">
             <tr>
@@ -1001,18 +1002,14 @@ function ReviewSheet({
               <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Recommended CBCode</th>
               <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Comments</th>
               <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Source</th>
+              <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Details</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line/80">
             {rows.map((row) => (
               <tr
                 key={row.row_id}
-                className="cursor-pointer odd:bg-white even:bg-field/35 hover:bg-pine/5 focus:bg-pine/5 focus:outline-none"
-                tabIndex={0}
-                onClick={() => onOpenRow(row)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") onOpenRow(row);
-                }}
+                className="odd:bg-white even:bg-field/35 hover:bg-pine/5"
               >
                 <td className="px-2 py-2 align-top font-mono text-[11px] leading-4 text-ink/85" title={row.SIN}>
                   <div className="whitespace-normal break-all">{row.SIN}</div>
@@ -1030,6 +1027,14 @@ function ReviewSheet({
                 <td className="px-2 py-2 align-top whitespace-normal break-words" title={row.Recommended_Comments}>{row.Recommended_Comments}</td>
                 <td className="px-2 py-2 align-top whitespace-nowrap" title={row.Recommended_Source}>
                   <span className="mr-2"><ColorDot color={row.Cell_Color_Source} /></span>{row.Recommended_Source}
+                </td>
+                <td className="px-2 py-2 align-top whitespace-nowrap">
+                  <button
+                    className="rounded border border-line px-2 py-1 text-[11px] font-semibold text-ink/70 hover:bg-field focus:outline-none focus:ring-2 focus:ring-pine/30"
+                    onClick={() => onOpenRow(row)}
+                  >
+                    Details
+                  </button>
                 </td>
               </tr>
             ))}
