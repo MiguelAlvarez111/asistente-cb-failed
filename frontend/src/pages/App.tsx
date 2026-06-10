@@ -978,13 +978,12 @@ function ReviewSheet({
         ))}
       </div>
       <div className="max-h-[640px] overflow-auto rounded border border-line">
-        <table className="min-w-[1848px] table-fixed text-left text-sm">
+        <table className="min-w-[1980px] table-fixed text-left text-sm">
           <colgroup>
             <col style={{ width: 260 }} />
             <col style={{ width: 62 }} />
             <col style={{ width: 90 }} />
             <col style={{ width: 138 }} />
-            <col style={{ width: 132 }} />
             <col style={{ width: 260 }} />
             <col style={{ width: 300 }} />
             <col style={{ width: 148 }} />
@@ -998,7 +997,6 @@ function ReviewSheet({
               <th className="border-b border-line px-3 py-2 text-center text-xs font-semibold uppercase tracking-wide text-ink/55">Row</th>
               <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Type</th>
               <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Action</th>
-              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Apply</th>
               <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Current Name</th>
               <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Recommended Name</th>
               <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Recommended NPI</th>
@@ -1024,7 +1022,6 @@ function ReviewSheet({
                 <td className="px-3 py-3 align-top text-center tabular-nums">{row.Row_Index}</td>
                 <td className="px-3 py-3 align-top whitespace-nowrap"><Badge>{roleLabel(row.Current_Type)}</Badge></td>
                 <td className="px-3 py-3 align-top whitespace-nowrap"><ActionBadge action={row.Final_Action} label={row.Quick_Action} /></td>
-                <td className="px-3 py-3 align-top whitespace-nowrap"><ApplyBadge apply={row.Apply_This} /></td>
                 <td className="px-3 py-3 align-top" title={providerSummary(row.Current_Last_Title, row.Current_First)}>
                   <div className="whitespace-normal break-words leading-5">{providerSummary(row.Current_Last_Title, row.Current_First)}</div>
                 </td>
