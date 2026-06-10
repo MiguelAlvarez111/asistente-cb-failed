@@ -978,29 +978,29 @@ function ReviewSheet({
         ))}
       </div>
       <div className="max-h-[640px] overflow-auto rounded border border-line">
-        <table className="min-w-[1920px] table-fixed text-left text-sm">
+        <table className="min-w-[1710px] table-fixed text-left text-xs">
           <colgroup>
+            <col style={{ width: 230 }} />
+            <col style={{ width: 82 }} />
+            <col style={{ width: 128 }} />
+            <col style={{ width: 230 }} />
+            <col style={{ width: 280 }} />
+            <col style={{ width: 128 }} />
             <col style={{ width: 260 }} />
-            <col style={{ width: 90 }} />
-            <col style={{ width: 138 }} />
-            <col style={{ width: 260 }} />
-            <col style={{ width: 300 }} />
-            <col style={{ width: 148 }} />
-            <col style={{ width: 300 }} />
-            <col style={{ width: 260 }} />
-            <col style={{ width: 160 }} />
+            <col style={{ width: 220 }} />
+            <col style={{ width: 150 }} />
           </colgroup>
           <thead className="sticky top-0 z-10 bg-field">
             <tr>
-              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">SIN</th>
-              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Type</th>
-              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Action</th>
-              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Current Name</th>
-              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Recommended Name</th>
-              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Recommended NPI</th>
-              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Recommended CBCode</th>
-              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Comments</th>
-              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Source</th>
+              <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">SIN</th>
+              <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Type</th>
+              <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Action</th>
+              <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Current Name</th>
+              <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Recommended Name</th>
+              <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Recommended NPI</th>
+              <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Recommended CBCode</th>
+              <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Comments</th>
+              <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Source</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line/80">
@@ -1014,21 +1014,21 @@ function ReviewSheet({
                   if (event.key === "Enter" || event.key === " ") onOpenRow(row);
                 }}
               >
-                <td className="px-3 py-3 align-top font-mono text-xs leading-5 text-ink/85" title={row.SIN}>
+                <td className="px-2 py-2 align-top font-mono text-[11px] leading-4 text-ink/85" title={row.SIN}>
                   <div className="whitespace-normal break-all">{row.SIN}</div>
                 </td>
-                <td className="px-3 py-3 align-top whitespace-nowrap"><Badge>{roleLabel(row.Current_Type)}</Badge></td>
-                <td className="px-3 py-3 align-top whitespace-nowrap"><ActionBadge action={row.Final_Action} label={row.Quick_Action} /></td>
-                <td className="px-3 py-3 align-top" title={providerSummary(row.Current_Last_Title, row.Current_First)}>
-                  <div className="whitespace-normal break-words leading-5">{providerSummary(row.Current_Last_Title, row.Current_First)}</div>
+                <td className="px-2 py-2 align-top whitespace-nowrap"><Badge>{roleLabel(row.Current_Type)}</Badge></td>
+                <td className="px-2 py-2 align-top whitespace-nowrap"><ActionBadge action={row.Final_Action} label={row.Quick_Action} /></td>
+                <td className="px-2 py-2 align-top" title={providerSummary(row.Current_Last_Title, row.Current_First)}>
+                  <div className="whitespace-normal break-words leading-4">{providerSummary(row.Current_Last_Title, row.Current_First)}</div>
                 </td>
-                <td className="px-3 py-3 align-top" title={recommendedProvider(row)}>
-                  <div className="whitespace-normal break-words leading-5">{recommendedProvider(row)}</div>
+                <td className="px-2 py-2 align-top" title={recommendedProvider(row)}>
+                  <div className="whitespace-normal break-words leading-4">{recommendedProvider(row)}</div>
                 </td>
-                <td className="px-3 py-3 align-top font-mono whitespace-nowrap"><span className="mr-2"><ColorDot color={row.Cell_Color_NPI} /></span>{row.Recommended_NPI}</td>
-                <td className="px-3 py-3 align-top font-mono whitespace-normal break-words"><span className="mr-2"><ColorDot color={row.Cell_Color_CBCode} /></span>{row.Recommended_CBCode}</td>
-                <td className="px-3 py-3 align-top whitespace-normal break-words" title={row.Recommended_Comments}>{row.Recommended_Comments}</td>
-                <td className="px-3 py-3 align-top whitespace-nowrap" title={row.Recommended_Source}>
+                <td className="px-2 py-2 align-top font-mono whitespace-nowrap"><span className="mr-2"><ColorDot color={row.Cell_Color_NPI} /></span>{row.Recommended_NPI}</td>
+                <td className="px-2 py-2 align-top font-mono whitespace-normal break-words"><span className="mr-2"><ColorDot color={row.Cell_Color_CBCode} /></span>{row.Recommended_CBCode}</td>
+                <td className="px-2 py-2 align-top whitespace-normal break-words" title={row.Recommended_Comments}>{row.Recommended_Comments}</td>
+                <td className="px-2 py-2 align-top whitespace-nowrap" title={row.Recommended_Source}>
                   <span className="mr-2"><ColorDot color={row.Cell_Color_Source} /></span>{row.Recommended_Source}
                 </td>
               </tr>
