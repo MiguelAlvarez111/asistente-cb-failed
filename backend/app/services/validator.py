@@ -7,6 +7,10 @@ from backend.app.services.dictionary_loader import DictionaryIndex, resolve_effe
 from backend.app.services.npi_registry import get_npi_data
 
 
+def _registry_full_name(npi_data: dict[str, str] | None) -> str | None:
+    return npi_data.get("full_name") if npi_data else None
+
+
 def _is_deactivated(value: str | None) -> bool:
     return bool(value and value.strip().upper() not in {"", "N", "NO", "0", "FALSE"})
 
@@ -76,7 +80,8 @@ def validate_interpretation(interpretation: AIInterpretation, index: DictionaryI
             status=ValidationStatus.MANUAL_REVIEW_REQUIRED,
             details="Only opposite-role dictionary matches were found; verify Provider vs Surgeon before applying.",
             matches=matches,
-            npi_registry_name=npi_data["full_name"] if npi_data else None,
+            npi_registry_name=_registry_full_name(npi_data),
+            npi_registry_data=npi_data,
             needs_manual_review=True,
             effective_match=matches[0] if len(matches) == 1 else None,
         )
@@ -85,7 +90,8 @@ def validate_interpretation(interpretation: AIInterpretation, index: DictionaryI
             status=ValidationStatus.MULTIPLE_MATCHES,
             details="Multiple dictionary matches require manual resolution.",
             matches=matches,
-            npi_registry_name=npi_data["full_name"] if npi_data else None,
+            npi_registry_name=_registry_full_name(npi_data),
+            npi_registry_data=npi_data,
             needs_manual_review=True,
             effective_match=None,
         )
@@ -94,7 +100,8 @@ def validate_interpretation(interpretation: AIInterpretation, index: DictionaryI
             status=ValidationStatus.DEACTIVATED_PROVIDER,
             details="Only dictionary match is deactivated.",
             matches=matches,
-            npi_registry_name=npi_data["full_name"] if npi_data else None,
+            npi_registry_name=_registry_full_name(npi_data),
+            npi_registry_data=npi_data,
             needs_manual_review=True,
             effective_match=matches[0],
         )
@@ -106,7 +113,8 @@ def validate_interpretation(interpretation: AIInterpretation, index: DictionaryI
             status=status,
             details="Dictionary match found.",
             matches=matches,
-            npi_registry_name=npi_data["full_name"] if npi_data else None,
+            npi_registry_name=_registry_full_name(npi_data),
+            npi_registry_data=npi_data,
             needs_manual_review=False,
             effective_match=matches[0],
         )
@@ -115,7 +123,8 @@ def validate_interpretation(interpretation: AIInterpretation, index: DictionaryI
             status=ValidationStatus.CBCODE_NOT_FOUND,
             details="Target CBCode was not found in loaded dictionaries.",
             matches=[],
-            npi_registry_name=npi_data["full_name"] if npi_data else None,
+            npi_registry_name=_registry_full_name(npi_data),
+            npi_registry_data=npi_data,
             needs_manual_review=True,
         )
     if interpretation.target_npi:
@@ -123,7 +132,8 @@ def validate_interpretation(interpretation: AIInterpretation, index: DictionaryI
             status=ValidationStatus.NPI_FOUND if npi_data else ValidationStatus.NPI_NOT_FOUND,
             details="NPI Registry lookup completed.",
             matches=[],
-            npi_registry_name=npi_data["full_name"] if npi_data else None,
+            npi_registry_name=_registry_full_name(npi_data),
+            npi_registry_data=npi_data,
             needs_manual_review=not bool(npi_data),
         )
     return ValidationResult(

@@ -93,6 +93,56 @@ def test_pending_addition_with_provider_npi_extracts_concrete_target() -> None:
     assert result.reason_code == AIReasonCode.CORRECT_PROVIDER_NPI
     assert result.target_provider_name == "COLE MD,JUSTIN BRYON"
     assert result.target_npi == "1073003075"
+    assert result.is_pending_usap is True
+
+
+def test_correct_provider_with_npi_and_awaiting_cbcode_is_pending_target() -> None:
+    result = interpret_row(
+        {
+            "npi": "1467778795",
+            "cbcode": "Awaiting for USAP’s Confirmation",
+            "comments": "Correct provider ELSBERND MD,BENJAMIN LAWRENCE with NPI 1487073748",
+        }
+    )
+
+    assert result.action == AIAction.CHANGE_TICKET
+    assert result.reason_code == AIReasonCode.CORRECT_PROVIDER_NPI
+    assert result.target_provider_name == "ELSBERND MD,BENJAMIN LAWRENCE"
+    assert result.target_npi == "1487073748"
+    assert result.target_cbcode is None
+    assert result.is_pending_usap is True
+
+
+def test_correct_provider_with_npi_without_name_extracts_npi_target() -> None:
+    result = interpret_row(
+        {
+            "npi": "1467778795",
+            "cbcode": "Awaiting for USAP’s Confirmation",
+            "comments": "Correct provider with NPI 1487073748",
+        }
+    )
+
+    assert result.action == AIAction.CHANGE_TICKET
+    assert result.target_provider_name is None
+    assert result.target_npi == "1487073748"
+    assert result.is_pending_usap is True
+
+
+def test_correct_provider_with_npi_and_cbcode_extracts_both_targets() -> None:
+    result = interpret_row(
+        {
+            "npi": "1104867365",
+            "cbcode": "Awaiting for USAP’s Confirmation",
+            "comments": "Correct provider GEORGE DPM,THOMAS with NPI 1770169542 and CB code TX23195",
+        }
+    )
+
+    assert result.action == AIAction.CHANGE_TICKET
+    assert result.reason_code == AIReasonCode.CORRECT_PROVIDER_NPI
+    assert result.target_provider_name == "GEORGE DPM,THOMAS"
+    assert result.target_npi == "1770169542"
+    assert result.target_cbcode == "TX23195"
+    assert result.is_pending_usap is False
 
 
 def test_double_npi_usap_change_extracts_second_npi_as_pending_target() -> None:

@@ -121,9 +121,18 @@ function fullCorrectionMatch(match: SINLookupMatch) {
 }
 
 function trustLine(match: SINLookupMatch) {
+  const source = match.recommended.source.toLowerCase();
   if (
     match.final_action === "CHANGE_TICKET" &&
-    match.recommended.source === "USAP" &&
+    source.includes("usap") &&
+    source.includes("npi registry") &&
+    match.recommended.cbcode.toLowerCase().includes("awaiting")
+  ) {
+    return "USAP change ticket; NPI Registry validated target; CBCode awaiting creation";
+  }
+  if (
+    match.final_action === "CHANGE_TICKET" &&
+    source.includes("usap") &&
     match.recommended.cbcode.toLowerCase().includes("awaiting")
   ) {
     return "USAP change ticket; CBCode awaiting creation";

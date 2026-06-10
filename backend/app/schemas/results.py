@@ -41,6 +41,7 @@ class ValidationResult(BaseModel):
     details: str
     matches: list[DictionaryMatch]
     npi_registry_name: str | None
+    npi_registry_data: dict[str, str] | None = None
     needs_manual_review: bool
     effective_match: DictionaryMatch | None = None
 

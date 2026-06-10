@@ -19,6 +19,21 @@ def interpretation(action: AIAction) -> AIInterpretation:
     )
 
 
+def change_ticket_pending_npi() -> AIInterpretation:
+    return AIInterpretation(
+        action=AIAction.CHANGE_TICKET,
+        reason_code=AIReasonCode.CORRECT_PROVIDER_NPI,
+        target_provider_name=None,
+        target_npi="1234567890",
+        target_cbcode=None,
+        requires_add_to_ge=False,
+        is_pending_usap=True,
+        confidence=1,
+        needs_manual_review=False,
+        explanation="test",
+    )
+
+
 def validation(status: ValidationStatus, review: bool = False) -> ValidationResult:
     return ValidationResult(status=status, details="details", matches=[], npi_registry_name=None, needs_manual_review=review)
 
@@ -56,3 +71,16 @@ def test_deactivated_provider_forces_manual_review() -> None:
     final_action, _, review = choose_final_action(interpretation(AIAction.COMPLETE_INFO), validation(ValidationStatus.DEACTIVATED_PROVIDER))
     assert final_action == "MANUAL_REVIEW"
     assert review is True
+
+
+def test_pending_change_ticket_requires_npi_registry_validation() -> None:
+    final_action, recommendation, review = choose_final_action(change_ticket_pending_npi(), validation(ValidationStatus.NPI_NOT_FOUND))
+    assert final_action == "MANUAL_REVIEW"
+    assert recommendation == "Target NPI could not be validated in NPI Registry or dictionary."
+    assert review is True
+
+
+def test_pending_change_ticket_ready_when_npi_registry_validates() -> None:
+    final_action, _, review = choose_final_action(change_ticket_pending_npi(), validation(ValidationStatus.NPI_FOUND))
+    assert final_action == "CHANGE_TICKET"
+    assert review is False

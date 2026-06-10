@@ -230,7 +230,17 @@ def test_remove_from_ticket_instruction() -> None:
 
 
 def test_pending_usap_change_ticket_with_npi_but_no_cbcode_is_ready_to_apply(monkeypatch) -> None:
-    monkeypatch.setattr("backend.app.services.validator.get_npi_data", lambda npi: {"full_name": "COLE JUSTIN", "npi": npi})
+    monkeypatch.setattr(
+        "backend.app.services.validator.get_npi_data",
+        lambda npi: {
+            "last_name": "COLE",
+            "first_name": "JUSTIN",
+            "middle_name": "BRYON",
+            "credential": "MD",
+            "full_name": "COLE, JUSTIN BRYON MD",
+            "npi": npi,
+        },
+    )
     row = {
         "type": "Surgeon",
         "last_title": "MORELAND",
@@ -254,11 +264,65 @@ def test_pending_usap_change_ticket_with_npi_but_no_cbcode_is_ready_to_apply(mon
     assert instruction.recommended_npi == "1073003075"
     assert instruction.recommended_cbcode == AWAITING_USAP_CBCODE
     assert instruction.recommended_comments == "Change in the ticket"
-    assert instruction.recommended_source == "USAP"
+    assert instruction.recommended_source == "USAP / NPI Registry"
     assert instruction.cell_color_cbcode == "yellow"
     assert instruction.cell_color_comments == "red"
     assert instruction.cell_color_source == "green"
-    assert instruction.correction_summary == "Change ticket with USAP correction; CBCode is awaiting creation."
+    assert instruction.correction_summary == "Change ticket with NPI Registry validated target; CBCode is awaiting creation."
+
+
+def test_npi_registry_completes_name_when_comment_has_only_npi(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "backend.app.services.validator.get_npi_data",
+        lambda npi: {
+            "last_name": "ELSBERND",
+            "first_name": "BENJAMIN",
+            "middle_name": "LAWRENCE",
+            "credential": "MD",
+            "full_name": "ELSBERND, BENJAMIN LAWRENCE MD",
+            "npi": npi,
+        },
+    )
+    row = {
+        "type": "Surgeon",
+        "last_title": "ALOBAIDI",
+        "first": "AHMED MOHAMMED",
+        "npi": "1467778795",
+        "cbcode": "Awaiting for USAP’s Confirmation",
+        "comments": "Correct provider with NPI 1487073748",
+        "source": "",
+    }
+
+    instruction, validation = _run(row, DictionaryIndex([]))
+
+    assert validation.status == ValidationStatus.NPI_FOUND
+    assert instruction.action == FinalAction.CHANGE_TICKET
+    assert instruction.apply_this == "YES"
+    assert instruction.recommended_last_title == "ELSBERND"
+    assert instruction.recommended_first == "BENJAMIN LAWRENCE"
+    assert instruction.recommended_npi == "1487073748"
+    assert instruction.recommended_cbcode == AWAITING_USAP_CBCODE
+    assert instruction.recommended_source == "USAP / NPI Registry"
+
+
+def test_change_ticket_npi_registry_failure_requires_manual_review(monkeypatch) -> None:
+    monkeypatch.setattr("backend.app.services.validator.get_npi_data", lambda npi: None)
+    row = {
+        "type": "Surgeon",
+        "last_title": "ALOBAIDI",
+        "first": "AHMED MOHAMMED",
+        "npi": "1467778795",
+        "cbcode": "Awaiting for USAP’s Confirmation",
+        "comments": "Correct provider with NPI 1487073748",
+        "source": "",
+    }
+
+    instruction, validation = _run(row, DictionaryIndex([]))
+
+    assert validation.status == ValidationStatus.NPI_NOT_FOUND
+    assert instruction.action == FinalAction.MANUAL_REVIEW
+    assert instruction.apply_this == "NO"
+    assert instruction.manual_reason == "Target NPI could not be validated in NPI Registry or dictionary."
 
 
 def test_surgeon_does_not_auto_apply_provider_dictionary_match(monkeypatch) -> None:

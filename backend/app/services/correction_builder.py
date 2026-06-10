@@ -35,11 +35,11 @@ def _split_provider_name(provider_name: str | None) -> tuple[str, str]:
         return "", ""
     if "," in name:
         last, first = name.split(",", 1)
-        return _strip_degree_suffix(last), first.strip()
+        return _strip_degree_suffix(last), _strip_degree_suffix(first)
     parts = name.split()
     if len(parts) == 1:
         return parts[0], ""
-    return _strip_degree_suffix(parts[0]), " ".join(parts[1:])
+    return _strip_degree_suffix(parts[0]), _strip_degree_suffix(" ".join(parts[1:]))
 
 
 def _strip_degree_suffix(value: str) -> str:
@@ -110,6 +110,25 @@ def _has_useful_completion(row: dict[str, Any], match: DictionaryMatch, recommen
     )
 
 
+def _npi_registry_name_parts(validation: ValidationResult) -> tuple[str, str]:
+    registry = validation.npi_registry_data or {}
+    last = _strip_degree_suffix(_clean(registry.get("last_name")))
+    first = _strip_degree_suffix(" ".join(part for part in [_clean(registry.get("first_name")), _clean(registry.get("middle_name"))] if part))
+    if last or first:
+        return last, first
+    return _split_provider_name(validation.npi_registry_name)
+
+
+def _best_npi_change_name(row: dict[str, Any], interpretation: AIInterpretation, validation: ValidationResult) -> tuple[str, str, str]:
+    registry_last, registry_first = _npi_registry_name_parts(validation)
+    if registry_last or registry_first:
+        return registry_last, registry_first, "USAP / NPI Registry"
+    comment_last, comment_first = _split_provider_name(interpretation.target_provider_name)
+    if comment_last or comment_first:
+        return comment_last, comment_first, "USAP"
+    return _clean(row.get("last_title")), _clean(row.get("first")), "USAP"
+
+
 class CorrectionBuilder:
     def build(
         self,
@@ -168,8 +187,8 @@ class CorrectionBuilder:
                 )
                 instruction.source_priority = "Dictionary"
                 return instruction
-            if interpretation.is_pending_usap and (interpretation.target_provider_name or interpretation.target_npi):
-                recommended_last, recommended_first = _split_provider_name(interpretation.target_provider_name)
+            if interpretation.target_npi and not interpretation.target_cbcode and validation.status == ValidationStatus.NPI_FOUND:
+                recommended_last, recommended_first, source = _best_npi_change_name(row, interpretation, validation)
                 instruction.apply_this = "YES"
                 instruction.needs_manual_review = False
                 instruction.cell_color_last_title = "red" if recommended_last else "gray"
@@ -183,17 +202,21 @@ class CorrectionBuilder:
                 instruction.recommended_npi = _clean(interpretation.target_npi)
                 instruction.recommended_cbcode = AWAITING_USAP_CBCODE
                 instruction.recommended_comments = "Change in the ticket"
-                instruction.recommended_source = "USAP"
-                instruction.correction_summary = "Change ticket with USAP correction; CBCode is awaiting creation."
+                instruction.recommended_source = source
+                instruction.correction_summary = "Change ticket with NPI Registry validated target; CBCode is awaiting creation."
                 instruction.analyst_next_step = (
                     "Apply the change-ticket correction and keep CBCode as awaiting USAP confirmation."
                 )
-                instruction.source_priority = "USAP"
+                instruction.source_priority = source
                 return instruction
             instruction.action = FinalAction.MANUAL_REVIEW
             instruction.display_label = DISPLAY_LABELS[FinalAction.MANUAL_REVIEW]
             _set_all_colors(instruction, "yellow")
-            instruction.manual_reason = "Change target could not be validated in dictionary."
+            instruction.manual_reason = (
+                "Target NPI could not be validated in NPI Registry or dictionary."
+                if interpretation.target_npi and validation.status == ValidationStatus.NPI_NOT_FOUND
+                else "Change target could not be validated in dictionary."
+            )
             instruction.correction_summary = "Change-ticket target could not be safely validated."
             instruction.analyst_next_step = "Review the target provider manually before changing the ticket."
             instruction.source_priority = "Manual Review"
