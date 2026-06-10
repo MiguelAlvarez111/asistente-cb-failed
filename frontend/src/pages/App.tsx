@@ -13,19 +13,17 @@ import {
   login,
   logout,
   lookupSin,
-  session,
-  updateWorkStatus
+  session
 } from "../api/client";
 import { Shell } from "../components/Shell";
 import { Stat } from "../components/Stat";
 import { LoginPage } from "./LoginPage";
-import type { FileKind, RowResult, SINLookupMatch, SINLookupResponse, UploadInspectionResponse, WorkStatus } from "../types/api";
+import type { FileKind, RowResult, SINLookupMatch, SINLookupResponse, UploadInspectionResponse } from "../types/api";
 
 type Section = "search" | "review" | "upload" | "export";
 type ReviewFilter = "READY" | "CHANGE_TICKET" | "COMPLETE_INFO" | "AWAITING_USAP" | "MANUAL_REVIEW" | "REMOVE_FROM_TICKET";
 type BadgeTone = "neutral" | "good" | "warn" | "danger";
 
-const WORK_STATUSES: WorkStatus[] = ["Pending", "Copied", "Applied", "Skipped"];
 const REVIEW_FILTERS: Array<{ label: string; value: ReviewFilter }> = [
   { label: "Ready", value: "READY" },
   { label: "Change", value: "CHANGE_TICKET" },
@@ -245,26 +243,6 @@ function ApplyBadge({ apply }: { apply: string }) {
   return <Badge tone={apply === "YES" ? "good" : "warn"}>{applyLabel(apply)}</Badge>;
 }
 
-function WorkStatusPill({ value }: { value: WorkStatus }) {
-  const tone: BadgeTone = value === "Applied" ? "good" : value === "Skipped" ? "warn" : "neutral";
-  return <Badge tone={tone}>{value}</Badge>;
-}
-
-function WorkStatusSelect({ value, onChange }: { value: WorkStatus; onChange: (status: WorkStatus) => void }) {
-  return (
-    <select
-      className="rounded border border-line bg-white px-2 py-1 text-xs"
-      value={value}
-      onClick={(event) => event.stopPropagation()}
-      onChange={(event) => onChange(event.target.value as WorkStatus)}
-    >
-      {WORK_STATUSES.map((status) => (
-        <option key={status} value={status}>{status}</option>
-      ))}
-    </select>
-  );
-}
-
 export default function App() {
   const queryClient = useQueryClient();
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -324,18 +302,6 @@ export default function App() {
     mutationFn: ({ currentJobId, sin }: { currentJobId: string; sin: string }) => lookupSin(currentJobId, sin),
     onSuccess: (data) => setLookupResult(data)
   });
-  const workStatusMutation = useMutation({
-    mutationFn: ({ rowId, status }: { rowId: string; status: WorkStatus }) => updateWorkStatus(jobId!, rowId, status),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["results", jobId] });
-      await queryClient.invalidateQueries({ queryKey: ["job", jobId] });
-      if (selectedRow) await queryClient.invalidateQueries({ queryKey: ["row", jobId, selectedRow.row_id] });
-      if (lookupResult && sinInput) {
-        const refreshed = await lookupSin(jobId!, sinInput);
-        setLookupResult(refreshed);
-      }
-    }
-  });
   const clearJobMutation = useMutation({
     mutationFn: deleteJob
   });
@@ -357,7 +323,6 @@ export default function App() {
     const count = (predicate: (row: RowResult) => boolean) => rows.filter(predicate).length;
     return {
       ready: count((row) => row.Apply_This === "YES"),
-      applied: count((row) => row.Work_Status === "Applied"),
       change: count((row) => row.Final_Action === "CHANGE_TICKET"),
       complete: count((row) => row.Final_Action === "COMPLETE_INFO"),
       awaiting: count((row) => row.Final_Action === "AWAITING_USAP"),
@@ -404,16 +369,11 @@ export default function App() {
     window.setTimeout(() => setToast(null), 1800);
   }, []);
 
-  const markCopied = useCallback((rowId: string) => {
-    if (jobId) workStatusMutation.mutate({ rowId, status: "Copied" });
-  }, [jobId, workStatusMutation]);
-
   const copyText = useCallback((label: string, value: string, rowId?: string) => {
     if (!value) return;
     navigator.clipboard?.writeText(value).catch(() => undefined);
     showToast(`Copied ${label}`);
-    if (rowId) markCopied(rowId);
-  }, [markCopied, showToast]);
+  }, [showToast]);
 
   const resetLocalJobState = useCallback(() => {
     setInspection(null);
@@ -487,9 +447,6 @@ export default function App() {
     }
     if (cleaned) lookupMutation.mutate({ currentJobId: jobId, sin: cleaned });
   };
-  const updateStatus = (rowId: string, status: WorkStatus) => {
-    if (jobId) workStatusMutation.mutate({ rowId, status });
-  };
   const openRow = (rowId: string) => {
     const row = rows.find((item) => item.row_id === rowId);
     if (row) setSelectedRow(row);
@@ -543,7 +500,6 @@ export default function App() {
           jobStatus={jobQuery.data?.status ?? "No job"}
           onOpenRow={openRow}
           onCopy={copyText}
-          onStatus={updateStatus}
           onGoUpload={() => setActiveSection("upload")}
           onGoReview={() => setActiveSection("review")}
         />
@@ -589,7 +545,6 @@ export default function App() {
           row={detail}
           onClose={() => setSelectedRow(null)}
           onCopy={copyText}
-          onStatus={(status) => updateStatus(detail.row_id, status)}
         />
       )}
 
@@ -614,7 +569,6 @@ function MainSearch({
   jobStatus,
   onOpenRow,
   onCopy,
-  onStatus,
   onGoUpload,
   onGoReview
 }: {
@@ -624,12 +578,11 @@ function MainSearch({
   runLookup: () => void;
   isSearching: boolean;
   lookupResult: SINLookupResponse | null;
-  summary: { ready: number; applied: number; change: number; complete: number; awaiting: number; manual: number };
+  summary: { ready: number; change: number; complete: number; awaiting: number; manual: number };
   rows: RowResult[];
   jobStatus: string;
   onOpenRow: (rowId: string) => void;
   onCopy: (label: string, value: string, rowId?: string) => void;
-  onStatus: (rowId: string, status: WorkStatus) => void;
   onGoUpload: () => void;
   onGoReview: () => void;
 }) {
@@ -680,7 +633,6 @@ function MainSearch({
           row={rows.find((row) => row.row_id === lookupResult.matches[0].row_id)}
           onOpen={() => onOpenRow(lookupResult.matches[0].row_id)}
           onCopy={onCopy}
-          onStatus={(status) => onStatus(lookupResult.matches[0].row_id, status)}
         />
       )}
 
@@ -694,12 +646,11 @@ function MainSearch({
   );
 }
 
-function SummaryCards({ summary, jobStatus }: { summary: { ready: number; applied: number; change: number; complete: number; awaiting: number; manual: number }; jobStatus: string }) {
+function SummaryCards({ summary, jobStatus }: { summary: { ready: number; change: number; complete: number; awaiting: number; manual: number }; jobStatus: string }) {
   return (
     <div>
-      <div className="grid gap-3 md:grid-cols-6">
+      <div className="grid gap-3 md:grid-cols-5">
         <Stat label="Ready" value={summary.ready} />
-        <Stat label="Applied" value={summary.applied} />
         <Stat label="Change Tickets" value={summary.change} />
         <Stat label="Complete Fields" value={summary.complete} />
         <Stat label="Awaiting USAP" value={summary.awaiting} />
@@ -753,14 +704,12 @@ function SinResultCard({
   match,
   row,
   onOpen,
-  onCopy,
-  onStatus
+  onCopy
 }: {
   match: SINLookupMatch;
   row?: RowResult;
   onOpen?: () => void;
   onCopy: (label: string, value: string, rowId?: string) => void;
-  onStatus: (status: WorkStatus) => void;
 }) {
   const currentProvider = providerSummary(match.current.last_title, match.current.first);
   const nextProvider = recommendedProviderFromMatch(match);
@@ -777,7 +726,6 @@ function SinResultCard({
           <Badge>{roleLabel(match.role)}</Badge>
           <ActionBadge action={match.final_action} label={match.quick_action} />
           <ApplyBadge apply={match.apply_this} />
-          <WorkStatusSelect value={match.work_status} onChange={onStatus} />
         </div>
       </div>
 
@@ -1030,7 +978,7 @@ function ReviewSheet({
         ))}
       </div>
       <div className="max-h-[640px] overflow-auto rounded border border-line">
-        <table className="min-w-[1950px] table-fixed text-left text-sm">
+        <table className="min-w-[1848px] table-fixed text-left text-sm">
           <colgroup>
             <col style={{ width: 260 }} />
             <col style={{ width: 62 }} />
@@ -1043,7 +991,6 @@ function ReviewSheet({
             <col style={{ width: 300 }} />
             <col style={{ width: 260 }} />
             <col style={{ width: 160 }} />
-            <col style={{ width: 102 }} />
           </colgroup>
           <thead className="sticky top-0 z-10 bg-field">
             <tr>
@@ -1058,7 +1005,6 @@ function ReviewSheet({
               <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Recommended CBCode</th>
               <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Comments</th>
               <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Source</th>
-              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Status</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line/80">
@@ -1091,7 +1037,6 @@ function ReviewSheet({
                 <td className="px-3 py-3 align-top whitespace-nowrap" title={row.Recommended_Source}>
                   <span className="mr-2"><ColorDot color={row.Cell_Color_Source} /></span>{row.Recommended_Source}
                 </td>
-                <td className="px-3 py-3 align-top whitespace-nowrap"><WorkStatusPill value={row.Work_Status} /></td>
               </tr>
             ))}
           </tbody>
@@ -1269,13 +1214,11 @@ function ExportPanel({ jobId }: { jobId: string | null }) {
 function DetailPanel({
   row,
   onClose,
-  onCopy,
-  onStatus
+  onCopy
 }: {
   row: RowResult;
   onClose: () => void;
   onCopy: (label: string, value: string, rowId?: string) => void;
-  onStatus: (status: WorkStatus) => void;
 }) {
   const match = rowToMatch(row);
   return (
@@ -1287,7 +1230,6 @@ function DetailPanel({
         match={match}
         row={row}
         onCopy={onCopy}
-        onStatus={onStatus}
       />
     </aside>
   );

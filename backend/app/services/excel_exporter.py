@@ -11,7 +11,6 @@ ANALYST_COLUMNS = [
     "SIN",
     "Region",
     "Row_Index",
-    "Work_Status",
     "Final_Action",
     "Quick_Action",
     "Apply_This",
