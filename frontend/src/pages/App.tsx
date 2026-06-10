@@ -543,6 +543,7 @@ export default function App() {
       {activeSection === "review" && (
         <ReviewSheet
           rows={reviewRows}
+          totalRows={sortedRows.length}
           regions={regions}
           selectedRegion={selectedRegion}
           setSelectedRegion={setReviewRegion}
@@ -954,6 +955,7 @@ function NoMatchState({ onGoUpload, onGoReview }: { onGoUpload: () => void; onGo
 
 function ReviewSheet({
   rows,
+  totalRows,
   regions,
   selectedRegion,
   setSelectedRegion,
@@ -964,6 +966,7 @@ function ReviewSheet({
   onOpenRow
 }: {
   rows: RowResult[];
+  totalRows: number;
   regions: string[];
   selectedRegion: string;
   setSelectedRegion: (region: string) => void;
@@ -980,14 +983,19 @@ function ReviewSheet({
           <h2 className="text-xl font-semibold">Review Sheet</h2>
           <p className="text-sm text-ink/60">Scan rows by region. Search is for working one ticket at a time.</p>
         </div>
-        <div className="flex items-center gap-2 rounded border border-line px-2">
-          <Search size={15} />
-          <input
-            className="py-2 text-sm outline-none"
-            placeholder="Search SIN or provider"
-            value={reviewSearch}
-            onChange={(event) => setReviewSearch(event.target.value)}
-          />
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="rounded-full border border-line bg-field px-3 py-1.5 text-sm font-semibold tabular-nums text-ink/70">
+            Rows: {rows.length} / {totalRows}
+          </div>
+          <div className="flex items-center gap-2 rounded border border-line px-2">
+            <Search size={15} />
+            <input
+              className="py-2 text-sm outline-none"
+              placeholder="Search SIN or provider"
+              value={reviewSearch}
+              onChange={(event) => setReviewSearch(event.target.value)}
+            />
+          </div>
         </div>
       </div>
       <div className="mb-3 flex flex-wrap gap-2">

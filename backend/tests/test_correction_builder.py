@@ -147,6 +147,11 @@ def test_provider_missing_fields_completes_from_provider_dictionary(monkeypatch)
     assert instruction.recommended_npi == "1134782147"
     assert instruction.recommended_cbcode == "TEDAJ"
     assert instruction.recommended_source == "Dictionary"
+    assert instruction.cell_color_last_title == "gray"
+    assert instruction.cell_color_first == "red"
+    assert instruction.cell_color_npi == "red"
+    assert instruction.cell_color_cbcode == "red"
+    assert instruction.cell_color_source == "red"
 
 
 def test_npi_registry_only_is_not_complete_info(monkeypatch) -> None:

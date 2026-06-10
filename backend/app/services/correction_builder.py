@@ -203,16 +203,17 @@ class CorrectionBuilder:
         if final_action == FinalAction.COMPLETE_INFO:
             if match:
                 recommended_last, recommended_first = _split_provider_name(match.provider_name)
+                completion_color = "red" if _role_from_row(row, match).lower() == "provider" else "green"
                 instruction.recommended_last_title = recommended_last
                 instruction.recommended_first = recommended_first
                 instruction.recommended_npi = _clean(match.npi)
                 instruction.recommended_cbcode = _clean(match.cbcode)
                 instruction.recommended_source = "Dictionary"
-                instruction.cell_color_last_title = "green" if recommended_last and _norm(row.get("last_title")) != _norm(recommended_last) else "gray"
-                instruction.cell_color_first = "green" if recommended_first and _norm(row.get("first")) != _norm(recommended_first) else "gray"
-                instruction.cell_color_npi = "green" if match.npi and _norm(row.get("npi")) != _norm(match.npi) else "gray"
-                instruction.cell_color_cbcode = "green" if match.cbcode and _norm(row.get("cbcode")) != _norm(match.cbcode) else "gray"
-                instruction.cell_color_source = "green"
+                instruction.cell_color_last_title = completion_color if recommended_last and _norm(row.get("last_title")) != _norm(recommended_last) else "gray"
+                instruction.cell_color_first = completion_color if recommended_first and _norm(row.get("first")) != _norm(recommended_first) else "gray"
+                instruction.cell_color_npi = completion_color if match.npi and _norm(row.get("npi")) != _norm(match.npi) else "gray"
+                instruction.cell_color_cbcode = completion_color if match.cbcode and _norm(row.get("cbcode")) != _norm(match.cbcode) else "gray"
+                instruction.cell_color_source = completion_color
                 instruction.correction_summary = "Complete missing NPI and CBCode from Dictionary."
                 instruction.analyst_next_step = "Apply the recommended NPI and CBCode to the report."
                 instruction.source_priority = "Dictionary"
