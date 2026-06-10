@@ -21,6 +21,18 @@ def _dictionary(rows: list[dict[str, str]]) -> DictionaryIndex:
     )
 
 
+def _provider_dictionary(rows: list[dict[str, str]]) -> DictionaryIndex:
+    return DictionaryIndex(
+        [
+            LoadedDictionary(
+                filename="USAP Providers.txt",
+                dictionary_type=DictionaryType.USAP_PROVIDERS,
+                df=pd.DataFrame(rows),
+            )
+        ]
+    )
+
+
 def _run(row: dict[str, str], index: DictionaryIndex):
     interpretation = interpret_row(row)
     validation = validate_interpretation(interpretation, index, row)
@@ -109,6 +121,34 @@ def test_complete_missing_cbcode_from_dictionary(monkeypatch) -> None:
     assert instruction.cell_color_source == "green"
 
 
+def test_provider_missing_fields_completes_from_provider_dictionary(monkeypatch) -> None:
+    monkeypatch.setattr("backend.app.services.validator.get_npi_data", lambda npi: None)
+    row = {"type": "Provider", "last_title": "Edmunds", "first": "Alisa", "npi": "", "cbcode": "", "comments": "", "source": ""}
+    index = _provider_dictionary(
+        [
+            {
+                "npi_number": "1134782147",
+                "prov_mnemonic": "TEDAJ",
+                "last_name": "EDMUNDS",
+                "first_name": "ALISA",
+                "middle_name": "JO",
+                "deactivation_flag": "",
+            }
+        ]
+    )
+
+    instruction, validation = _run(row, index)
+
+    assert validation.status == ValidationStatus.CBCODE_FOUND
+    assert instruction.action == FinalAction.COMPLETE_INFO
+    assert instruction.apply_this == "YES"
+    assert instruction.current_type == "Provider"
+    assert instruction.recommended_type == "Provider"
+    assert instruction.recommended_npi == "1134782147"
+    assert instruction.recommended_cbcode == "TEDAJ"
+    assert instruction.recommended_source == "Dictionary"
+
+
 def test_npi_registry_only_is_not_complete_info(monkeypatch) -> None:
     monkeypatch.setattr("backend.app.services.validator.get_npi_data", lambda npi: {"full_name": "JONES, DERRICK", "npi": npi})
     row = {"last_title": "JONES", "first": "DERRICK", "npi": "1689712655", "cbcode": "", "comments": ""}
@@ -182,6 +222,57 @@ def test_remove_from_ticket_instruction() -> None:
     assert instruction.apply_this == "NO"
     assert instruction.needs_manual_review is True
     assert instruction.recommended_comments == "Remove from the ticket"
+
+
+def test_pending_usap_correction_with_npi_but_no_cbcode_stays_awaiting(monkeypatch) -> None:
+    monkeypatch.setattr("backend.app.services.validator.get_npi_data", lambda npi: {"full_name": "COLE JUSTIN", "npi": npi})
+    row = {
+        "type": "Surgeon",
+        "last_title": "MORELAND",
+        "first": "JUSTIN PATRICK",
+        "npi": "1174967541",
+        "cbcode": "Awaiting for USAP’s Confirmation",
+        "comments": "Pending addition of correct provider COLE MD,JUSTIN BRYON with NPI 1073003075",
+        "source": "USAP",
+    }
+
+    instruction, validation = _run(row, DictionaryIndex([]))
+
+    assert validation.status == ValidationStatus.NPI_FOUND
+    assert instruction.action == FinalAction.AWAITING_USAP
+    assert instruction.apply_this == "NO"
+    assert instruction.current_type == "Surgeon"
+    assert instruction.recommended_type == "Surgeon"
+    assert instruction.recommended_last_title == "COLE"
+    assert instruction.recommended_first == "JUSTIN BRYON"
+    assert instruction.recommended_npi == "1073003075"
+    assert instruction.recommended_cbcode == AWAITING_USAP_CBCODE
+    assert instruction.recommended_comments == "Change in the ticket"
+    assert instruction.recommended_source == "USAP"
+    assert instruction.correction_summary == "USAP correction received; awaiting CBCode."
+
+
+def test_surgeon_does_not_auto_apply_provider_dictionary_match(monkeypatch) -> None:
+    monkeypatch.setattr("backend.app.services.validator.get_npi_data", lambda npi: None)
+    row = {"type": "Surgeon", "last_title": "MORELAND", "first": "JUSTIN PATRICK", "npi": "1174967541", "cbcode": "", "comments": ""}
+    index = _provider_dictionary(
+        [
+            {
+                "npi_number": "1174967541",
+                "prov_mnemonic": "TMOJU",
+                "last_name": "MORELAND",
+                "first_name": "JUSTIN",
+                "middle_name": "PATRICK",
+                "deactivation_flag": "",
+            }
+        ]
+    )
+
+    instruction, validation = _run(row, index)
+
+    assert validation.status == ValidationStatus.MANUAL_REVIEW_REQUIRED
+    assert instruction.action == FinalAction.MANUAL_REVIEW
+    assert instruction.apply_this == "NO"
 
 
 def test_instruction_does_not_include_phi() -> None:

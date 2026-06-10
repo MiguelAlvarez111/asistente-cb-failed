@@ -89,6 +89,18 @@ function providerSummary(lastTitle: string, first: string) {
   return last || given || "No provider";
 }
 
+function roleLabel(role?: string | null) {
+  const value = String(role || "").trim();
+  if (!value) return "Provider";
+  if (value.toLowerCase() === "surgeon") return "Surgeon";
+  if (value.toLowerCase() === "provider") return "Provider";
+  return value;
+}
+
+function roleNoun(role?: string | null) {
+  return roleLabel(role);
+}
+
 function recommendedProvider(row: Pick<RowResult, "Recommended_Last_Title" | "Recommended_First">) {
   return providerSummary(row.Recommended_Last_Title, row.Recommended_First);
 }
@@ -113,6 +125,7 @@ function trustLine(match: SINLookupMatch) {
   if (match.final_action === "COMPLETE_INFO") {
     return match.recommended.cbcode ? `Dictionary validated CBCode ${match.recommended.cbcode}` : "Dictionary validated correction";
   }
+  if (match.final_action === "AWAITING_USAP" && match.recommended.source === "USAP") return "USAP correction received; awaiting CBCode";
   if (match.final_action === "AWAITING_USAP" || match.final_action === "ADD_TO_GE") return "Awaiting USAP confirmation";
   if (match.final_action === "MANUAL_REVIEW") return "Manual review required";
   if (match.final_action === "REMOVE_FROM_TICKET") return "Remove from ticket requires verification";
@@ -130,6 +143,7 @@ function rowToMatch(row: RowResult): SINLookupMatch {
     quick_action: row.Quick_Action,
     apply_this: row.Apply_This,
     work_status: row.Work_Status,
+    role: row.Current_Type,
     current_provider: providerSummary(row.Current_Last_Title, row.Current_First),
     current: {
       last_title: row.Current_Last_Title,
@@ -342,6 +356,7 @@ export default function App() {
       const filterMatch = reviewFilter === "READY" ? row.Apply_This === "YES" : row.Final_Action === reviewFilter;
       const searchText = [
         row.SIN,
+        row.Current_Type,
         row.Current_Last_Title,
         row.Current_First,
         row.Recommended_Last_Title,
@@ -732,15 +747,17 @@ function SinResultCard({
 }) {
   const currentProvider = providerSummary(match.current.last_title, match.current.first);
   const nextProvider = recommendedProviderFromMatch(match);
+  const noun = roleNoun(match.role);
   return (
     <article className="rounded border border-line bg-white p-5 shadow-sm transition-opacity">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-xs uppercase tracking-wide text-ink/50">SIN</p>
           <h3 className="text-2xl font-semibold">{match.sin}</h3>
-          <p className="mt-1 text-sm text-ink/60">{match.region} · Row {match.row_index} · {currentProvider}</p>
+          <p className="mt-1 text-sm text-ink/60">{roleLabel(match.role)} · {match.region} · Row {match.row_index} · {currentProvider}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Badge>{roleLabel(match.role)}</Badge>
           <ActionBadge action={match.final_action} label={match.quick_action} />
           <ApplyBadge apply={match.apply_this} />
           <WorkStatusSelect value={match.work_status} onChange={onStatus} />
@@ -749,12 +766,12 @@ function SinResultCard({
 
       <section className="mt-4 grid items-center gap-3 rounded border border-line bg-field/40 p-4 md:grid-cols-[1fr_auto_1fr]">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-ink/45">Current Provider</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-ink/45">Current {noun}</p>
           <p className="mt-1 break-words text-xl font-semibold">{currentProvider}</p>
         </div>
         <div className="text-2xl font-semibold text-coral md:px-2" aria-hidden="true">→</div>
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-ink/45">Recommended Provider</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-ink/45">Recommended {noun}</p>
           <p className="mt-1 break-words text-xl font-semibold">{nextProvider}</p>
         </div>
       </section>
@@ -892,14 +909,14 @@ function MultipleMatchResults({ matches, onOpen }: { matches: SINLookupMatch[]; 
             <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold">{match.region} · Row {match.row_index}</p>
-                <p className="text-sm text-ink/60">{providerSummary(match.current.last_title, match.current.first)}</p>
+                <p className="text-sm text-ink/60">{roleLabel(match.role)} · {providerSummary(match.current.last_title, match.current.first)}</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <ActionBadge action={match.final_action} label={match.quick_action} />
                 <ApplyBadge apply={match.apply_this} />
               </div>
             </div>
-            <p className="text-sm">Recommended: {recommendedProviderFromMatch(match)}</p>
+            <p className="text-sm">Recommended {roleNoun(match.role)}: {recommendedProviderFromMatch(match)}</p>
             <p className="text-sm">CBCode: {match.recommended.cbcode || "blank"}</p>
             <button className="mt-3 rounded bg-pine px-3 py-2 text-sm font-semibold text-white" onClick={() => onOpen(match.row_id)}>
               Open
@@ -989,10 +1006,11 @@ function ReviewSheet({
         ))}
       </div>
       <div className="max-h-[640px] overflow-auto rounded border border-line">
-        <table className="min-w-[1420px] table-fixed text-left text-sm">
+        <table className="min-w-[1510px] table-fixed text-left text-sm">
           <colgroup>
             <col style={{ width: 165 }} />
             <col style={{ width: 62 }} />
+            <col style={{ width: 90 }} />
             <col style={{ width: 138 }} />
             <col style={{ width: 132 }} />
             <col style={{ width: 190 }} />
@@ -1007,10 +1025,11 @@ function ReviewSheet({
             <tr>
               <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">SIN</th>
               <th className="border-b border-line px-3 py-2 text-center text-xs font-semibold uppercase tracking-wide text-ink/55">Row</th>
+              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Type</th>
               <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Action</th>
               <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Apply</th>
-              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Current Provider</th>
-              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Recommended Provider</th>
+              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Current Name</th>
+              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Recommended Name</th>
               <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Recommended NPI</th>
               <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Recommended CBCode</th>
               <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Comments</th>
@@ -1033,6 +1052,7 @@ function ReviewSheet({
                   <div className="max-h-10 overflow-hidden break-all">{row.SIN}</div>
                 </td>
                 <td className="px-3 py-2 text-center tabular-nums">{row.Row_Index}</td>
+                <td className="px-3 py-2 whitespace-nowrap"><Badge>{roleLabel(row.Current_Type)}</Badge></td>
                 <td className="px-3 py-2 whitespace-nowrap"><ActionBadge action={row.Final_Action} label={row.Quick_Action} /></td>
                 <td className="px-3 py-2 whitespace-nowrap"><ApplyBadge apply={row.Apply_This} /></td>
                 <td className="px-3 py-2" title={providerSummary(row.Current_Last_Title, row.Current_First)}>

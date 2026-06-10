@@ -54,6 +54,8 @@ def _row(row_id: str, sin: str, region: str = "MARYLAND") -> RowDetail:
         Final_Recommendation="Apply values.",
         Quick_Action="Complete fields",
         Apply_This="YES",
+        Current_Type="Provider",
+        Recommended_Type="Provider",
         Current_Last_Title="DOE",
         Current_First="JANE",
         Current_NPI="",
@@ -90,6 +92,7 @@ def test_sin_lookup_exact_match(tmp_path) -> None:
     payload = response.json()
     assert payload["match_count"] == 1
     assert payload["matches"][0]["sin"] == "abc 123"
+    assert payload["matches"][0]["role"] == "Provider"
     assert payload["matches"][0]["recommended"]["cbcode"] == "CB1"
 
 

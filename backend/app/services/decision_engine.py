@@ -9,9 +9,7 @@ def choose_final_action(interpretation: AIInterpretation, validation: Validation
         return FinalAction.REMOVE_FROM_TICKET, "Verify ticket context before removing this provider.", True
     if interpretation.requires_add_to_ge or validation.status == ValidationStatus.ADD_TO_GE_REQUIRED:
         return FinalAction.AWAITING_USAP, "Send to USAP for GE setup or confirmation.", False
-    if interpretation.is_pending_usap or interpretation.action == AIAction.AWAITING_USAP:
-        return FinalAction.AWAITING_USAP, "Await USAP confirmation.", False
-    if validation.status in {ValidationStatus.DEACTIVATED_PROVIDER, ValidationStatus.MULTIPLE_MATCHES}:
+    if validation.status in {ValidationStatus.DEACTIVATED_PROVIDER, ValidationStatus.MULTIPLE_MATCHES, ValidationStatus.MANUAL_REVIEW_REQUIRED}:
         return FinalAction.MANUAL_REVIEW, validation.details, True
     if interpretation.action == AIAction.CHANGE_TICKET and validation.status in {
         ValidationStatus.VALIDATED,
@@ -19,6 +17,10 @@ def choose_final_action(interpretation: AIInterpretation, validation: Validation
         ValidationStatus.NPI_FOUND,
     } and validation.matches:
         return FinalAction.CHANGE_TICKET, "Change ticket with validated target provider.", False
+    if interpretation.action == AIAction.CHANGE_TICKET and interpretation.is_pending_usap:
+        return FinalAction.AWAITING_USAP, "USAP correction received; awaiting CBCode.", False
+    if interpretation.is_pending_usap or interpretation.action == AIAction.AWAITING_USAP:
+        return FinalAction.AWAITING_USAP, "Await USAP confirmation.", False
     if interpretation.action == AIAction.CHANGE_TICKET:
         return FinalAction.MANUAL_REVIEW, "Change target could not be validated in dictionary.", True
     if interpretation.action == AIAction.COMPLETE_INFO and validation.status in {

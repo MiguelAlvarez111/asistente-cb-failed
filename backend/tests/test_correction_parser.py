@@ -93,3 +93,41 @@ def test_pending_addition_with_provider_npi_extracts_concrete_target() -> None:
     assert result.reason_code == AIReasonCode.CORRECT_PROVIDER_NPI
     assert result.target_provider_name == "COLE MD,JUSTIN BRYON"
     assert result.target_npi == "1073003075"
+
+
+def test_double_npi_usap_change_extracts_second_npi_as_pending_target() -> None:
+    result = interpret_row(
+        {
+            "type": "Surgeon",
+            "last_title": "MORELAND COLE",
+            "first": "JUSTIN PATRICK JUSTIN",
+            "npi": "1174967541 1073003075",
+            "cbcode": "Awaiting for USAP’s Confirmation",
+            "comments": "Change in the ticket",
+            "source": "USAP",
+        }
+    )
+
+    assert result.action == AIAction.CHANGE_TICKET
+    assert result.reason_code == AIReasonCode.USAP_PENDING_CBCODE
+    assert result.is_pending_usap is True
+    assert result.target_npi == "1073003075"
+    assert result.target_provider_name == "COLE,JUSTIN"
+
+
+def test_provider_missing_fields_requests_name_lookup() -> None:
+    result = interpret_row(
+        {
+            "type": "Provider",
+            "last_title": "Edmunds",
+            "first": "Alisa",
+            "npi": "",
+            "cbcode": "",
+            "comments": "",
+            "source": "",
+        }
+    )
+
+    assert result.action == AIAction.COMPLETE_INFO
+    assert result.reason_code == AIReasonCode.PROVIDER_NAME_LOOKUP
+    assert result.target_provider_name == "Edmunds Alisa"

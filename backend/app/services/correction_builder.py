@@ -7,6 +7,7 @@ from backend.app.schemas.results import CorrectionInstruction, FinalAction, Vali
 
 
 AWAITING_USAP_CBCODE = "Awaiting for USAP confirmation"
+DEGREE_TOKENS = {"MD", "DO", "CRNA", "MDA", "DPM", "PA", "NP", "RN"}
 
 DISPLAY_LABELS = {
     FinalAction.COMPLETE_INFO: "Complete fields",
@@ -34,11 +35,25 @@ def _split_provider_name(provider_name: str | None) -> tuple[str, str]:
         return "", ""
     if "," in name:
         last, first = name.split(",", 1)
-        return last.strip(), first.strip()
+        return _strip_degree_suffix(last), first.strip()
     parts = name.split()
     if len(parts) == 1:
         return parts[0], ""
-    return parts[0], " ".join(parts[1:])
+    return _strip_degree_suffix(parts[0]), " ".join(parts[1:])
+
+
+def _strip_degree_suffix(value: str) -> str:
+    tokens = [token for token in value.strip().split() if token.upper().strip(".,") not in DEGREE_TOKENS]
+    return " ".join(tokens).strip()
+
+
+def _role_from_row(row: dict[str, Any], match: DictionaryMatch | None = None) -> str:
+    role = _clean(row.get("type"))
+    if role:
+        return role
+    if match:
+        return "Provider" if str(match.dictionary_type) == "USAP_PROVIDERS" else "Surgeon"
+    return ""
 
 
 def _base_instruction(
@@ -53,6 +68,8 @@ def _base_instruction(
         action=final_action,
         display_label=DISPLAY_LABELS.get(final_action, final_action.value.replace("_", " ").title()),
         apply_this="NO",
+        current_type=_role_from_row(row, match),
+        recommended_type=_role_from_row(row, match),
         current_last_title=_clean(row.get("last_title")),
         current_first=_clean(row.get("first")),
         current_npi=_clean(row.get("npi")),
@@ -190,6 +207,18 @@ class CorrectionBuilder:
             instruction.recommended_source = ""
             instruction.apply_this = "NO"
             instruction.correction_summary = "No validated CBCode/NPI was found or identity conflict exists."
+            if interpretation.action.value == "CHANGE_TICKET" and (interpretation.target_provider_name or interpretation.target_npi):
+                recommended_last, recommended_first = _split_provider_name(interpretation.target_provider_name)
+                instruction.recommended_last_title = recommended_last
+                instruction.recommended_first = recommended_first
+                instruction.recommended_npi = _clean(interpretation.target_npi)
+                instruction.recommended_comments = "Change in the ticket"
+                instruction.recommended_source = "USAP"
+                instruction.cell_color_source = "yellow"
+                instruction.correction_summary = "USAP correction received; awaiting CBCode."
+                instruction.analyst_next_step = "Wait for USAP to confirm the CBCode before applying this correction."
+                instruction.source_priority = "USAP"
+                return instruction
             if validation.status == ValidationStatus.NPI_FOUND and not match:
                 instruction.recommended_comments = "The NPI appears valid in NPI Registry, but no CBCode was found in the dictionary."
                 instruction.correction_summary = "NPI Registry validates identity but does not provide CBCode."

@@ -1,4 +1,5 @@
 from backend.app.schemas.ai import AIAction, AIInterpretation
+from backend.app.schemas.dictionaries import DictionaryType
 from backend.app.schemas.results import ValidationResult, ValidationStatus
 from typing import Any
 
@@ -10,19 +11,34 @@ def _is_deactivated(value: str | None) -> bool:
     return bool(value and value.strip().upper() not in {"", "N", "NO", "0", "FALSE"})
 
 
-def _lookup_matches(interpretation: AIInterpretation, index: DictionaryIndex):
+def _role_dictionary_types(row: dict[str, Any] | None) -> tuple[set[DictionaryType] | None, set[DictionaryType] | None]:
+    role = str((row or {}).get("type", "") or "").strip().lower()
+    if role == "provider":
+        return {DictionaryType.USAP_PROVIDERS}, {DictionaryType.REFERRING_PROVIDERS}
+    if role == "surgeon":
+        return {DictionaryType.REFERRING_PROVIDERS}, {DictionaryType.USAP_PROVIDERS}
+    return None, None
+
+
+def _lookup_matches(
+    interpretation: AIInterpretation,
+    index: DictionaryIndex,
+    *,
+    dictionary_types: set[DictionaryType] | None = None,
+):
     if interpretation.action == AIAction.CHANGE_TICKET:
         if interpretation.target_cbcode:
-            return index.lookup(cbcode=interpretation.target_cbcode)
+            return index.lookup(cbcode=interpretation.target_cbcode, dictionary_types=dictionary_types)
         if interpretation.target_npi:
-            return index.lookup(npi=interpretation.target_npi)
+            return index.lookup(npi=interpretation.target_npi, dictionary_types=dictionary_types)
         if interpretation.target_provider_name:
-            return index.lookup(provider_name=interpretation.target_provider_name)
+            return index.lookup(provider_name=interpretation.target_provider_name, dictionary_types=dictionary_types)
         return []
     return index.lookup(
         npi=interpretation.target_npi,
         cbcode=interpretation.target_cbcode,
         provider_name=interpretation.target_provider_name,
+        dictionary_types=dictionary_types,
     )
 
 
@@ -44,9 +60,26 @@ def validate_interpretation(interpretation: AIInterpretation, index: DictionaryI
             needs_manual_review=False,
         )
 
-    matches = resolve_effective_matches(_lookup_matches(interpretation, index), row)
+    preferred_types, fallback_types = _role_dictionary_types(row)
+    role_mismatch = False
+    raw_matches = _lookup_matches(interpretation, index, dictionary_types=preferred_types)
+    if preferred_types is not None and not raw_matches:
+        fallback_matches = _lookup_matches(interpretation, index, dictionary_types=fallback_types)
+        if fallback_matches:
+            raw_matches = fallback_matches
+            role_mismatch = True
+    matches = resolve_effective_matches(raw_matches, row)
     npi_data = get_npi_data(interpretation.target_npi)
 
+    if role_mismatch and matches:
+        return ValidationResult(
+            status=ValidationStatus.MANUAL_REVIEW_REQUIRED,
+            details="Only opposite-role dictionary matches were found; verify Provider vs Surgeon before applying.",
+            matches=matches,
+            npi_registry_name=npi_data["full_name"] if npi_data else None,
+            needs_manual_review=True,
+            effective_match=matches[0] if len(matches) == 1 else None,
+        )
     if len(matches) > 1:
         return ValidationResult(
             status=ValidationStatus.MULTIPLE_MATCHES,

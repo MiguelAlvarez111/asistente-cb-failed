@@ -48,6 +48,8 @@ def _row(*, row_id: str = "r1", final_action: str = "COMPLETE_INFO", apply_this:
         Final_Recommendation="ok",
         Quick_Action="Complete fields",
         Apply_This=apply_this,
+        Current_Type="Provider",
+        Recommended_Type="Provider",
         Recommended_CBCode="CB1",
         Recommended_Source=source,
         Cell_Color_CBCode="green",
@@ -67,6 +69,8 @@ def test_apply_ready_export_filters_yes_rows() -> None:
     data = rows_to_workbook([_row(row_id="ready", apply_this="YES"), _row(row_id="hold", apply_this="NO")], kind="apply_ready")
     df = pd.read_excel(BytesIO(data))
     assert df["row_id"].tolist() == ["ready"]
+    assert "Current_Type" in df.columns
+    assert "Recommended_Type" in df.columns
     assert "Recommended_CBCode" in df.columns
     assert "Cell_Color_CBCode" in df.columns
 
@@ -87,5 +91,6 @@ def test_usap_export_filters_awaiting_and_clears_source() -> None:
 def test_numbers_ready_export_groups_by_region_and_includes_color_fields() -> None:
     data = rows_to_workbook([_row(row_id="md", apply_this="YES")], kind="numbers_ready")
     df = pd.read_excel(BytesIO(data), sheet_name="MARYLAND")
+    assert "Current_Type" in df.columns
     assert "Recommended_CBCode" in df.columns
     assert "Cell_Color_CBCode" in df.columns

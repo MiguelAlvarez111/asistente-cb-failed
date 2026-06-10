@@ -15,6 +15,8 @@ ANALYST_COLUMNS = [
     "Final_Action",
     "Quick_Action",
     "Apply_This",
+    "Current_Type",
+    "Recommended_Type",
     "Current_Last_Title",
     "Current_First",
     "Current_NPI",

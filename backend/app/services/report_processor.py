@@ -171,6 +171,8 @@ class ReportProcessor:
                             Final_Recommendation=instruction.analyst_next_step,
                             Quick_Action=instruction.display_label,
                             Apply_This=instruction.apply_this,
+                            Current_Type=instruction.current_type,
+                            Recommended_Type=instruction.recommended_type,
                             Current_Last_Title=instruction.current_last_title,
                             Current_First=instruction.current_first,
                             Current_NPI=instruction.current_npi,

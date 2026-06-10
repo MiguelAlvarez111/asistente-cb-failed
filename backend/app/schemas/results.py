@@ -51,6 +51,8 @@ class CorrectionInstruction(BaseModel):
     action: FinalAction = FinalAction.MANUAL_REVIEW
     display_label: str = "Manual review"
     apply_this: str = "NO"
+    current_type: str = ""
+    recommended_type: str = ""
     current_last_title: str = ""
     current_first: str = ""
     current_npi: str = ""
@@ -110,6 +112,8 @@ class RowResult(BaseModel):
     Final_Recommendation: str
     Quick_Action: str = ""
     Apply_This: str = "NO"
+    Current_Type: str = ""
+    Recommended_Type: str = ""
     Current_Last_Title: str = ""
     Current_First: str = ""
     Current_NPI: str = ""
@@ -180,6 +184,7 @@ class SINLookupMatch(BaseModel):
     quick_action: str
     apply_this: str
     work_status: RowWorkStatus
+    role: str
     current_provider: str
     current: LookupCurrentValues
     recommended: LookupRecommendedValues

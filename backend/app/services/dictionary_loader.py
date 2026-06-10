@@ -10,6 +10,9 @@ from backend.app.services.column_normalizer import normalize_dataframe
 from backend.app.services.file_classifier import detect_dictionary
 
 
+DEGREE_TOKENS = {"MD", "DO", "CRNA", "MDA", "DPM", "PA", "NP", "RN"}
+
+
 @dataclass
 class LoadedDictionary:
     filename: str
@@ -37,6 +40,20 @@ def _provider_name(row: pd.Series) -> str:
 def _normalize_match_value(value: Any) -> str:
     text = re.sub(r"[^A-Z0-9]+", " ", str(value or "").upper()).strip()
     return " ".join(text.split())
+
+
+def _name_tokens(value: Any) -> list[str]:
+    return [token for token in _normalize_match_value(value).split() if token not in DEGREE_TOKENS]
+
+
+def _provider_name_matches(needle: str, candidate: str) -> bool:
+    needle_tokens = _name_tokens(needle)
+    candidate_tokens = _name_tokens(candidate)
+    if not needle_tokens or not candidate_tokens:
+        return False
+    needle_text = " ".join(needle_tokens)
+    candidate_text = " ".join(candidate_tokens)
+    return needle_text in candidate_text or all(token in candidate_tokens for token in needle_tokens)
 
 
 def _effective_key(match: DictionaryMatch) -> tuple[str, str, str]:
@@ -77,9 +94,18 @@ class DictionaryIndex:
     def __init__(self, dictionaries: list[LoadedDictionary]) -> None:
         self.dictionaries = dictionaries
 
-    def lookup(self, *, npi: str | None = None, cbcode: str | None = None, provider_name: str | None = None) -> list[DictionaryMatch]:
+    def lookup(
+        self,
+        *,
+        npi: str | None = None,
+        cbcode: str | None = None,
+        provider_name: str | None = None,
+        dictionary_types: set[DictionaryType] | None = None,
+    ) -> list[DictionaryMatch]:
         matches: list[DictionaryMatch] = []
         for dictionary in self.dictionaries:
+            if dictionary_types is not None and dictionary.dictionary_type not in dictionary_types:
+                continue
             df = dictionary.df
             if npi and "npi_number" in df.columns:
                 subset = df[df["npi_number"].str.lower() == npi.lower()]
@@ -88,9 +114,8 @@ class DictionaryIndex:
                 subset = df[df[dictionary.cbcode_column].str.lower() == cbcode.lower()]
                 matches.extend(_to_match(dictionary, row, "CBCODE") for _, row in subset.iterrows())
             if provider_name:
-                needle = provider_name.lower().strip()
                 for _, row in df.iterrows():
-                    if needle and needle in _provider_name(row).lower():
+                    if _provider_name_matches(provider_name, _provider_name(row)):
                         matches.append(_to_match(dictionary, row, "PROVIDER_NAME"))
         unique: dict[tuple[str, str | None, str | None], DictionaryMatch] = {}
         for match in matches:

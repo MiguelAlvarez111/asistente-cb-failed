@@ -28,6 +28,7 @@ def _to_lookup_match(row: RowDetail) -> SINLookupMatch:
         quick_action=row.Quick_Action,
         apply_this=row.Apply_This,
         work_status=row.Work_Status,
+        role=row.Current_Type,
         current_provider=_provider_summary(row.Current_Last_Title, row.Current_First),
         current=LookupCurrentValues(
             last_title=row.Current_Last_Title,

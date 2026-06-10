@@ -4,6 +4,7 @@ from backend.app.schemas.ai import AIAction, AIInterpretation, AIReasonCode
 
 
 MALFORMED_RE = re.compile(r"^\s*line\s+\d+\s*:?\s*$", re.IGNORECASE)
+DEGREE_TOKENS = {"MD", "DO", "CRNA", "MDA", "DPM", "PA", "NP", "RN"}
 
 
 def _target_cbcode(value: str) -> str | None:
@@ -12,6 +13,35 @@ def _target_cbcode(value: str) -> str | None:
     if not text or "awaiting" in lower or "pending" in lower or "add to ge" in lower:
         return None
     return text
+
+
+def _row_role(row: dict[str, str]) -> str:
+    return str(row.get("type", "") or "").strip().lower()
+
+
+def _provider_name_from_row(row: dict[str, str]) -> str | None:
+    last = str(row.get("last_title", "") or "").strip()
+    first = str(row.get("first", "") or "").strip()
+    if last and first:
+        return f"{last} {first}"
+    return last or first or None
+
+
+def _strip_degree_tokens(value: str) -> str:
+    tokens = [token for token in value.split() if token.upper().strip(".,") not in DEGREE_TOKENS]
+    return " ".join(tokens).strip()
+
+
+def _target_name_from_combined_fields(row: dict[str, str]) -> str | None:
+    last_parts = str(row.get("last_title", "") or "").strip().split()
+    first_parts = str(row.get("first", "") or "").strip().split()
+    if len(last_parts) < 2 or len(first_parts) < 2:
+        return None
+    target_last = _strip_degree_tokens(last_parts[-1])
+    target_first = first_parts[-1].strip()
+    if target_last and target_first:
+        return f"{target_last},{target_first}"
+    return None
 
 
 def _make(
@@ -91,6 +121,18 @@ def interpret_row(row: dict[str, str]) -> AIInterpretation:
             explanation="ADD TO GE instruction detected.",
         )
 
+    npi_values = re.findall(r"\b\d{10}\b", npi_field)
+    if len(npi_values) >= 2 and "awaiting" in cbcode_field.lower() and ("change in the ticket" in lower or source.lower() == "usap"):
+        return _make(
+            AIAction.CHANGE_TICKET,
+            AIReasonCode.USAP_PENDING_CBCODE,
+            provider_name=_target_name_from_combined_fields(row),
+            npi=npi_values[-1],
+            pending=True,
+            confidence=0.9,
+            explanation="USAP correction with target NPI is awaiting CBCode.",
+        )
+
     chg_match = re.search(r"chg\s+to\s+(?P<name>.+)", npi_field, re.IGNORECASE) or re.search(r"chg\s+to\s+(?P<name>.+)", comments, re.IGNORECASE)
     if chg_match:
         return _make(
@@ -115,13 +157,15 @@ def interpret_row(row: dict[str, str]) -> AIInterpretation:
 
     npi_match = re.search(r"(?:correct|pending addition of correct)\s+provider\s+(?P<name>.*?)\s+with\s+npi\s+(?P<npi>\d{10})", comments, re.IGNORECASE)
     if npi_match:
+        is_pending_addition = npi_match.group(0).lower().startswith("pending addition")
         return _make(
             AIAction.CHANGE_TICKET,
             AIReasonCode.CORRECT_PROVIDER_NPI,
             provider_name=npi_match.group("name").strip(),
             npi=npi_match.group("npi").strip(),
+            pending=is_pending_addition,
             confidence=1,
-            explanation="Correct provider with NPI instruction detected.",
+            explanation="USAP correction with target NPI is awaiting CBCode." if is_pending_addition else "Correct provider with NPI instruction detected.",
         )
 
     correct_npi_cb_match = re.search(r"correct\s+npi\s+(?P<npi>\d{10})\s+with\s+cb\s*code\s+(?P<cb>[A-Za-z0-9_-]+)", comments, re.IGNORECASE)
@@ -157,6 +201,14 @@ def interpret_row(row: dict[str, str]) -> AIInterpretation:
         return _make(AIAction.COMPLETE_INFO, AIReasonCode.DIRECT_CBCODE, cbcode=cbcode_field, confidence=0.9, explanation="Direct CBCode value present.")
     if npi_field and npi_field.isdigit():
         return _make(AIAction.COMPLETE_INFO, AIReasonCode.DIRECT_NPI, npi=npi_field, confidence=0.85, explanation="Direct NPI value present.")
+    if _row_role(row) == "provider" and _provider_name_from_row(row):
+        return _make(
+            AIAction.COMPLETE_INFO,
+            AIReasonCode.PROVIDER_NAME_LOOKUP,
+            provider_name=_provider_name_from_row(row),
+            confidence=0.75,
+            explanation="Provider name lookup requested for missing NPI/CBCode.",
+        )
 
     return _make(
         AIAction.UNKNOWN,

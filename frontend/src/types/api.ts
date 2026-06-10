@@ -74,6 +74,8 @@ export type RowResult = {
   Final_Recommendation: string;
   Quick_Action: string;
   Apply_This: "YES" | "NO" | string;
+  Current_Type: string;
+  Recommended_Type: string;
   Current_Last_Title: string;
   Current_First: string;
   Current_NPI: string;
@@ -132,6 +134,7 @@ export type SINLookupMatch = {
   quick_action: string;
   apply_this: string;
   work_status: WorkStatus;
+  role: string;
   current_provider: string;
   current: LookupValues;
   recommended: LookupRecommendedValues;
