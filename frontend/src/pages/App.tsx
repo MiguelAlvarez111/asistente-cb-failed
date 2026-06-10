@@ -1030,19 +1030,19 @@ function ReviewSheet({
         ))}
       </div>
       <div className="max-h-[640px] overflow-auto rounded border border-line">
-        <table className="min-w-[1510px] table-fixed text-left text-sm">
+        <table className="min-w-[1950px] table-fixed text-left text-sm">
           <colgroup>
-            <col style={{ width: 165 }} />
+            <col style={{ width: 260 }} />
             <col style={{ width: 62 }} />
             <col style={{ width: 90 }} />
             <col style={{ width: 138 }} />
             <col style={{ width: 132 }} />
-            <col style={{ width: 190 }} />
-            <col style={{ width: 210 }} />
+            <col style={{ width: 260 }} />
+            <col style={{ width: 300 }} />
             <col style={{ width: 148 }} />
-            <col style={{ width: 150 }} />
-            <col style={{ width: 210 }} />
-            <col style={{ width: 120 }} />
+            <col style={{ width: 300 }} />
+            <col style={{ width: 260 }} />
+            <col style={{ width: 160 }} />
             <col style={{ width: 102 }} />
           </colgroup>
           <thead className="sticky top-0 z-10 bg-field">
@@ -1065,33 +1065,33 @@ function ReviewSheet({
             {rows.map((row) => (
               <tr
                 key={row.row_id}
-                className="h-14 cursor-pointer odd:bg-white even:bg-field/35 hover:bg-pine/5 focus:bg-pine/5 focus:outline-none"
+                className="cursor-pointer odd:bg-white even:bg-field/35 hover:bg-pine/5 focus:bg-pine/5 focus:outline-none"
                 tabIndex={0}
                 onClick={() => onOpenRow(row)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") onOpenRow(row);
                 }}
               >
-                <td className="px-3 py-2 font-mono text-xs leading-5 text-ink/85" title={row.SIN}>
-                  <div className="max-h-10 overflow-hidden break-all">{row.SIN}</div>
+                <td className="px-3 py-3 align-top font-mono text-xs leading-5 text-ink/85" title={row.SIN}>
+                  <div className="whitespace-normal break-all">{row.SIN}</div>
                 </td>
-                <td className="px-3 py-2 text-center tabular-nums">{row.Row_Index}</td>
-                <td className="px-3 py-2 whitespace-nowrap"><Badge>{roleLabel(row.Current_Type)}</Badge></td>
-                <td className="px-3 py-2 whitespace-nowrap"><ActionBadge action={row.Final_Action} label={row.Quick_Action} /></td>
-                <td className="px-3 py-2 whitespace-nowrap"><ApplyBadge apply={row.Apply_This} /></td>
-                <td className="px-3 py-2" title={providerSummary(row.Current_Last_Title, row.Current_First)}>
-                  <div className="max-h-10 overflow-hidden leading-5">{providerSummary(row.Current_Last_Title, row.Current_First)}</div>
+                <td className="px-3 py-3 align-top text-center tabular-nums">{row.Row_Index}</td>
+                <td className="px-3 py-3 align-top whitespace-nowrap"><Badge>{roleLabel(row.Current_Type)}</Badge></td>
+                <td className="px-3 py-3 align-top whitespace-nowrap"><ActionBadge action={row.Final_Action} label={row.Quick_Action} /></td>
+                <td className="px-3 py-3 align-top whitespace-nowrap"><ApplyBadge apply={row.Apply_This} /></td>
+                <td className="px-3 py-3 align-top" title={providerSummary(row.Current_Last_Title, row.Current_First)}>
+                  <div className="whitespace-normal break-words leading-5">{providerSummary(row.Current_Last_Title, row.Current_First)}</div>
                 </td>
-                <td className="px-3 py-2" title={recommendedProvider(row)}>
-                  <div className="max-h-10 overflow-hidden leading-5">{recommendedProvider(row)}</div>
+                <td className="px-3 py-3 align-top" title={recommendedProvider(row)}>
+                  <div className="whitespace-normal break-words leading-5">{recommendedProvider(row)}</div>
                 </td>
-                <td className="px-3 py-2 font-mono whitespace-nowrap"><span className="mr-2"><ColorDot color={row.Cell_Color_NPI} /></span>{row.Recommended_NPI}</td>
-                <td className="px-3 py-2 font-mono whitespace-nowrap"><span className="mr-2"><ColorDot color={row.Cell_Color_CBCode} /></span>{row.Recommended_CBCode}</td>
-                <td className="truncate px-3 py-2" title={row.Recommended_Comments}>{row.Recommended_Comments}</td>
-                <td className="px-3 py-2 whitespace-nowrap" title={row.Recommended_Source}>
+                <td className="px-3 py-3 align-top font-mono whitespace-nowrap"><span className="mr-2"><ColorDot color={row.Cell_Color_NPI} /></span>{row.Recommended_NPI}</td>
+                <td className="px-3 py-3 align-top font-mono whitespace-normal break-words"><span className="mr-2"><ColorDot color={row.Cell_Color_CBCode} /></span>{row.Recommended_CBCode}</td>
+                <td className="px-3 py-3 align-top whitespace-normal break-words" title={row.Recommended_Comments}>{row.Recommended_Comments}</td>
+                <td className="px-3 py-3 align-top whitespace-nowrap" title={row.Recommended_Source}>
                   <span className="mr-2"><ColorDot color={row.Cell_Color_Source} /></span>{row.Recommended_Source}
                 </td>
-                <td className="px-3 py-2 whitespace-nowrap"><WorkStatusPill value={row.Work_Status} /></td>
+                <td className="px-3 py-3 align-top whitespace-nowrap"><WorkStatusPill value={row.Work_Status} /></td>
               </tr>
             ))}
           </tbody>
