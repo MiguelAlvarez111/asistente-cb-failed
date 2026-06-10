@@ -38,6 +38,11 @@ export async function getJob(jobId: string) {
   return data;
 }
 
+export async function deleteJob(jobId: string) {
+  const { data } = await api.delete<{ status: string }>(`/api/jobs/${jobId}`);
+  return data;
+}
+
 export async function getResults(jobId: string) {
   const { data } = await api.get<RowResult[]>(`/api/results/${jobId}`);
   return data;

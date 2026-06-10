@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, FileCheck2, Play, Search, X } from "lucide-react";
 import {
   createJob,
+  deleteJob,
   type ExportKind,
   exportUrl,
   getJob,
@@ -82,7 +83,10 @@ function applyLabel(value: string) {
 }
 
 function providerSummary(lastTitle: string, first: string) {
-  return [lastTitle, first].filter(Boolean).join(" ").trim() || "No provider";
+  const last = lastTitle.trim();
+  const given = first.trim();
+  if (last && given) return `${last}, ${given}`;
+  return last || given || "No provider";
 }
 
 function recommendedProvider(row: Pick<RowResult, "Recommended_Last_Title" | "Recommended_First">) {
@@ -114,34 +118,6 @@ function trustLine(match: SINLookupMatch) {
   if (match.final_action === "REMOVE_FROM_TICKET") return "Remove from ticket requires verification";
   if (match.final_action === "MALFORMED_ROW") return "Invalid row";
   return match.validation_status || "Correction reviewed";
-}
-
-function recommendedRows(match: SINLookupMatch) {
-  const allRows = [
-    { label: "Last - Title", value: match.recommended.last_title, color: match.cell_colors.last_title },
-    { label: "First", value: match.recommended.first, color: match.cell_colors.first },
-    { label: "NPI", value: match.recommended.npi, color: match.cell_colors.npi },
-    { label: "CBCode", value: match.recommended.cbcode, color: match.cell_colors.cbcode },
-    { label: "Comments", value: match.recommended.comments, color: match.cell_colors.comments },
-    { label: "Source", value: match.recommended.source, color: match.cell_colors.source }
-  ];
-  if (match.final_action === "CHANGE_TICKET") return allRows;
-  if (match.final_action === "COMPLETE_INFO") {
-    return allRows.filter((row) => ["NPI", "CBCode", "Source"].includes(row.label) && row.value);
-  }
-  if (match.final_action === "AWAITING_USAP") {
-    return allRows.filter((row) => ["CBCode", "Comments", "Source"].includes(row.label));
-  }
-  if (match.final_action === "MANUAL_REVIEW") {
-    return [{ label: "Reason", value: match.manual_reason || match.correction_summary || "Manual review required", color: "yellow" }];
-  }
-  if (match.final_action === "REMOVE_FROM_TICKET") {
-    return [
-      { label: "Comments", value: match.recommended.comments || "Remove from the ticket", color: match.cell_colors.comments || "yellow" },
-      { label: "Reason", value: match.manual_reason || "Verify before removing this provider", color: "yellow" }
-    ];
-  }
-  return allRows.filter((row) => row.value);
 }
 
 function rowToMatch(row: RowResult): SINLookupMatch {
@@ -192,6 +168,31 @@ function colorClass(color: string) {
   return "bg-gray-400";
 }
 
+function correctionCellClass(color: string) {
+  const normalized = color.toLowerCase();
+  if (normalized === "red") return "border-red-200 bg-red-50 text-red-900";
+  if (normalized === "green") return "border-green-200 bg-green-50 text-green-900";
+  if (normalized === "yellow") return "border-yellow-200 bg-yellow-50 text-yellow-900";
+  return "border-line bg-white text-ink";
+}
+
+function currentDisplay(value: string | undefined | null) {
+  return value && String(value).trim() ? String(value) : "blank";
+}
+
+function recommendedDisplay(value: string | undefined | null) {
+  return value && String(value).trim() ? String(value) : "—";
+}
+
+function sanitizedString(row: RowResult | undefined, keys: string[]) {
+  if (!row) return "";
+  for (const key of keys) {
+    const value = row.sanitized_original?.[key];
+    if (value !== undefined && value !== null && String(value).trim()) return String(value);
+  }
+  return "";
+}
+
 function ColorDot({ color }: { color: string }) {
   return <span className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${colorClass(color)}`} title={color} />;
 }
@@ -237,6 +238,7 @@ function WorkStatusSelect({ value, onChange }: { value: WorkStatus; onChange: (s
 export default function App() {
   const queryClient = useQueryClient();
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeSection, setActiveSection] = useState<Section>("search");
   const [inspection, setInspection] = useState<UploadInspectionResponse | null>(null);
   const [fileOverrides, setFileOverrides] = useState<Record<string, FileKind>>({});
@@ -304,6 +306,9 @@ export default function App() {
       }
     }
   });
+  const clearJobMutation = useMutation({
+    mutationFn: deleteJob
+  });
 
   useEffect(() => {
     const job = new URLSearchParams(window.location.search).get("job");
@@ -361,6 +366,7 @@ export default function App() {
             message: jobQuery.data.status === "COMPLETED" ? "Completed" : jobQuery.data.message
           }
         : null;
+  const isJobBusy = jobMutation.isPending || jobQuery.data?.status === "QUEUED" || jobQuery.data?.status === "PROCESSING";
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -377,6 +383,36 @@ export default function App() {
     showToast(`Copied ${label}`);
     if (rowId) markCopied(rowId);
   }, [markCopied, showToast]);
+
+  const resetLocalJobState = useCallback(() => {
+    setInspection(null);
+    setFileOverrides({});
+    setJobId(null);
+    setSelectedRow(null);
+    setLookupResult(null);
+    setSinInput("");
+    setReviewFilter("READY");
+    setReviewSearch("");
+    setReviewRegion("");
+    setToast(null);
+    setActiveSection("upload");
+    window.history.replaceState(null, "", "/");
+    queryClient.removeQueries({ queryKey: ["job"] });
+    queryClient.removeQueries({ queryKey: ["results"] });
+    queryClient.removeQueries({ queryKey: ["row"] });
+    window.setTimeout(() => fileInputRef.current?.focus(), 100);
+  }, [queryClient]);
+
+  const clearCurrentJob = useCallback(async () => {
+    if (isJobBusy || clearJobMutation.isPending) return;
+    const confirmed = window.confirm("This will clear the current job results from this session. Download any needed exports first.");
+    if (!confirmed) return;
+    const currentJobId = jobId;
+    if (currentJobId) {
+      await clearJobMutation.mutateAsync(currentJobId).catch(() => undefined);
+    }
+    resetLocalJobState();
+  }, [clearJobMutation, isJobBusy, jobId, resetLocalJobState]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -430,6 +466,15 @@ export default function App() {
 
   return (
     <Shell
+      actions={jobId ? (
+        <button
+          className="rounded border border-line px-3 py-2 text-sm font-medium hover:bg-field disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={isJobBusy || clearJobMutation.isPending}
+          onClick={() => void clearCurrentJob()}
+        >
+          New Report
+        </button>
+      ) : null}
       onLogout={async () => {
         await logout();
         queryClient.invalidateQueries({ queryKey: ["session"] });
@@ -496,7 +541,12 @@ export default function App() {
           processPending={jobMutation.isPending}
           onUploadFiles={(files) => uploadMutation.mutate(files)}
           onProcess={(uploadId) => jobMutation.mutate(uploadId)}
+          onContinue={() => setActiveSection("search")}
+          onNewReport={() => void clearCurrentJob()}
+          newReportDisabled={isJobBusy || clearJobMutation.isPending}
           jobStatus={jobQuery.data?.status}
+          jobId={jobId}
+          fileInputRef={fileInputRef}
         />
       )}
 
@@ -680,7 +730,7 @@ function SinResultCard({
   onCopy: (label: string, value: string, rowId?: string) => void;
   onStatus: (status: WorkStatus) => void;
 }) {
-  const currentProvider = match.current_provider || providerSummary(match.current.last_title, match.current.first);
+  const currentProvider = providerSummary(match.current.last_title, match.current.first);
   const nextProvider = recommendedProviderFromMatch(match);
   return (
     <article className="rounded border border-line bg-white p-5 shadow-sm transition-opacity">
@@ -697,8 +747,6 @@ function SinResultCard({
         </div>
       </div>
 
-      <p className="mt-4 w-fit rounded-full border border-line bg-field px-3 py-1 text-sm font-medium text-ink/75">{trustLine(match)}</p>
-
       <section className="mt-4 grid items-center gap-3 rounded border border-line bg-field/40 p-4 md:grid-cols-[1fr_auto_1fr]">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-ink/45">Current Provider</p>
@@ -711,52 +759,83 @@ function SinResultCard({
         </div>
       </section>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-[1.25fr_0.85fr]">
-        <RecommendedValuesCard match={match} />
-        <CurrentValuesCard match={match} />
-      </div>
+      <CorrectionComparisonTable match={match} row={row} />
+
+      <p className="mt-3 text-sm font-medium text-ink/70">{trustLine(match)}.</p>
 
       <AdvancedDetails row={row} match={match} onOpen={onOpen} onCopy={onCopy} />
     </article>
   );
 }
 
-function RecommendedValuesCard({ match }: { match: SINLookupMatch }) {
-  const rows = recommendedRows(match);
+function CorrectionComparisonTable({ match, row }: { match: SINLookupMatch; row?: RowResult }) {
+  const current = {
+    last_title: match.current.last_title,
+    first: match.current.first,
+    npi: match.current.npi,
+    cbcode: match.current.cbcode,
+    comments: sanitizedString(row, ["comments", "Comments"]),
+    source: sanitizedString(row, ["source", "Source"])
+  };
+  const recommended = match.recommended;
+  const columns = [
+    { key: "last_title", label: "Last - Title", color: match.cell_colors.last_title, current: current.last_title, recommended: recommended.last_title },
+    { key: "first", label: "First", color: match.cell_colors.first, current: current.first, recommended: recommended.first },
+    { key: "npi", label: "NPI", color: match.cell_colors.npi, current: current.npi, recommended: recommended.npi },
+    { key: "cbcode", label: "CBCode", color: match.cell_colors.cbcode, current: current.cbcode, recommended: recommended.cbcode },
+    { key: "comments", label: "Comments", color: match.cell_colors.comments, current: current.comments, recommended: recommended.comments },
+    { key: "source", label: "Source", color: match.cell_colors.source, current: current.source, recommended: recommended.source }
+  ];
+
   return (
-    <section className="rounded border border-line p-4">
-      <h4 className="mb-3 text-sm font-semibold uppercase tracking-wide text-ink/55">Recommended correction</h4>
-      <div className="divide-y divide-line/70">
-        {rows.map((item) => (
-          <div key={item.label} className="grid grid-cols-[130px_1fr_auto] items-center gap-3 py-2">
-            <span className="text-sm text-ink/55">{item.label}</span>
-            <span className="min-w-0 break-words text-sm font-semibold text-ink select-text">{item.value || "blank"}</span>
-            <ColorDot color={item.color} />
-          </div>
-        ))}
+    <section className="mt-4 rounded border border-line bg-white">
+      <div className="border-b border-line px-4 py-3">
+        <h4 className="text-sm font-semibold uppercase tracking-wide text-ink/55">Correction Preview</h4>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-[960px] table-fixed text-left text-sm">
+          <colgroup>
+            <col style={{ width: 118 }} />
+            <col style={{ width: 140 }} />
+            <col style={{ width: 150 }} />
+            <col style={{ width: 150 }} />
+            <col style={{ width: 140 }} />
+            <col style={{ width: 235 }} />
+            <col style={{ width: 150 }} />
+          </colgroup>
+          <thead className="bg-field">
+            <tr>
+              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/45" />
+              {columns.map((column) => (
+                <th key={column.key} className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">
+                  {column.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            <tr>
+              <th className="bg-field/45 px-3 py-3 text-xs font-semibold uppercase tracking-wide text-ink/55">Current</th>
+              {columns.map((column) => (
+                <td key={column.key} className="px-3 py-3 align-top">
+                  <span className="select-text break-words font-medium text-ink/80">{currentDisplay(column.current)}</span>
+                </td>
+              ))}
+            </tr>
+            <tr>
+              <th className="bg-field/45 px-3 py-3 text-xs font-semibold uppercase tracking-wide text-ink/55">Recommended</th>
+              {columns.map((column) => (
+                <td key={column.key} className="px-2 py-2 align-top">
+                  <span className={`block rounded border px-2 py-1.5 font-semibold select-text ${correctionCellClass(column.color)}`}>
+                    {recommendedDisplay(column.recommended)}
+                  </span>
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
       </div>
     </section>
-  );
-}
-
-function CurrentValuesCard({ match }: { match: SINLookupMatch }) {
-  return (
-    <section className="rounded border border-line bg-field/45 p-4">
-      <h4 className="mb-3 text-sm font-semibold uppercase tracking-wide text-ink/55">Current values</h4>
-      <ValueLine label="Last - Title" value={match.current.last_title} />
-      <ValueLine label="First" value={match.current.first} />
-      <ValueLine label="NPI" value={match.current.npi} />
-      <ValueLine label="CBCode" value={match.current.cbcode} />
-    </section>
-  );
-}
-
-function ValueLine({ label, value, color }: { label: string; value: string; color?: string }) {
-  return (
-    <div className="mb-2 flex items-start justify-between gap-3 border-b border-line/70 pb-2 last:mb-0 last:border-b-0 last:pb-0">
-      <span className="flex items-center gap-2 text-sm text-ink/55">{color && <ColorDot color={color} />}{label}</span>
-      <span className="max-w-[65%] break-words text-right text-sm font-medium">{value || "blank"}</span>
-    </div>
   );
 }
 
@@ -813,7 +892,7 @@ function MultipleMatchResults({ matches, onOpen }: { matches: SINLookupMatch[]; 
             <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold">{match.region} · Row {match.row_index}</p>
-                <p className="text-sm text-ink/60">{match.current_provider}</p>
+                <p className="text-sm text-ink/60">{providerSummary(match.current.last_title, match.current.first)}</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <ActionBadge action={match.final_action} label={match.quick_action} />
@@ -916,13 +995,13 @@ function ReviewSheet({
             <col style={{ width: 62 }} />
             <col style={{ width: 138 }} />
             <col style={{ width: 132 }} />
-            <col style={{ width: 102 }} />
             <col style={{ width: 190 }} />
             <col style={{ width: 210 }} />
             <col style={{ width: 148 }} />
             <col style={{ width: 150 }} />
             <col style={{ width: 210 }} />
             <col style={{ width: 120 }} />
+            <col style={{ width: 102 }} />
           </colgroup>
           <thead className="sticky top-0 z-10 bg-field">
             <tr>
@@ -930,13 +1009,13 @@ function ReviewSheet({
               <th className="border-b border-line px-3 py-2 text-center text-xs font-semibold uppercase tracking-wide text-ink/55">Row</th>
               <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Action</th>
               <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Apply</th>
-              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Status</th>
               <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Current Provider</th>
               <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Recommended Provider</th>
               <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Recommended NPI</th>
               <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Recommended CBCode</th>
               <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Comments</th>
               <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Source</th>
+              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Status</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line/80">
@@ -956,7 +1035,6 @@ function ReviewSheet({
                 <td className="px-3 py-2 text-center tabular-nums">{row.Row_Index}</td>
                 <td className="px-3 py-2 whitespace-nowrap"><ActionBadge action={row.Final_Action} label={row.Quick_Action} /></td>
                 <td className="px-3 py-2 whitespace-nowrap"><ApplyBadge apply={row.Apply_This} /></td>
-                <td className="px-3 py-2 whitespace-nowrap"><WorkStatusPill value={row.Work_Status} /></td>
                 <td className="px-3 py-2" title={providerSummary(row.Current_Last_Title, row.Current_First)}>
                   <div className="max-h-10 overflow-hidden leading-5">{providerSummary(row.Current_Last_Title, row.Current_First)}</div>
                 </td>
@@ -969,6 +1047,7 @@ function ReviewSheet({
                 <td className="px-3 py-2 whitespace-nowrap" title={row.Recommended_Source}>
                   <span className="mr-2"><ColorDot color={row.Cell_Color_Source} /></span>{row.Recommended_Source}
                 </td>
+                <td className="px-3 py-2 whitespace-nowrap"><WorkStatusPill value={row.Work_Status} /></td>
               </tr>
             ))}
           </tbody>
@@ -986,7 +1065,12 @@ function UploadPanel({
   processPending,
   onUploadFiles,
   onProcess,
-  jobStatus
+  onContinue,
+  onNewReport,
+  newReportDisabled,
+  jobStatus,
+  jobId,
+  fileInputRef
 }: {
   inspection: UploadInspectionResponse | null;
   fileOverrides: Record<string, FileKind>;
@@ -995,13 +1079,41 @@ function UploadPanel({
   processPending: boolean;
   onUploadFiles: (files: File[]) => void;
   onProcess: (uploadId: string) => void;
+  onContinue: () => void;
+  onNewReport: () => void;
+  newReportDisabled: boolean;
   jobStatus?: string;
+  jobId: string | null;
+  fileInputRef: React.RefObject<HTMLInputElement>;
 }) {
   return (
     <section className="mx-auto max-w-5xl space-y-5">
+      {jobId && (
+        <div className="rounded border border-line bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-ink/50">Current job</p>
+              <p className="text-sm text-ink/70">{jobStatus ?? "Loading"}</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button className="rounded bg-pine px-3 py-2 text-sm font-semibold text-white hover:bg-pine/90" onClick={onContinue}>
+                Continue working
+              </button>
+              <button
+                className="rounded border border-line px-3 py-2 text-sm font-medium hover:bg-field disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={newReportDisabled}
+                onClick={onNewReport}
+              >
+                New Report
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="rounded border border-line bg-white p-5">
         <h2 className="mb-3 flex items-center gap-2 text-xl font-semibold"><FileCheck2 size={20} /> Upload</h2>
         <input
+          ref={fileInputRef}
           type="file"
           multiple
           accept=".xlsx,.xls,.txt"

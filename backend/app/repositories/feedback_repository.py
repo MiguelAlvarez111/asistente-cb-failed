@@ -22,6 +22,8 @@ class FeedbackRepository:
     def counts(self, job_id: str) -> dict[str, int]:
         return dict(Counter(item["status"] for item in self.feedback.get(job_id, [])))
 
+    def clear(self, job_id: str) -> None:
+        self.feedback.pop(job_id, None)
+
 
 feedback_repository = FeedbackRepository()
-

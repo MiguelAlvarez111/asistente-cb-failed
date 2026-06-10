@@ -64,6 +64,15 @@ def get_job(job_id: str) -> JobStatusResponse:
     )
 
 
+@router.delete("/{job_id}")
+def clear_job(job_id: str) -> dict[str, str]:
+    if not job_repository.get_job(job_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found or expired")
+    job_repository.delete_job(job_id)
+    feedback_repository.clear(job_id)
+    return {"status": "cleared"}
+
+
 @router.post("/{job_id}/feedback/{row_id}")
 def add_feedback(job_id: str, row_id: str, payload: FeedbackRequest) -> dict[str, str]:
     job = job_repository.get_job(job_id)

@@ -113,5 +113,12 @@ class JobRepository:
         if upload:
             shutil.rmtree(upload.temp_dir, ignore_errors=True)
 
+    def delete_job(self, job_id: str) -> bool:
+        if job_id not in self.jobs:
+            return False
+        self.delete_job_files(job_id)
+        self.jobs.pop(job_id, None)
+        return True
+
 
 job_repository = JobRepository()

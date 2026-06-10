@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from backend.app.main import app
+from backend.app.repositories.feedback_repository import feedback_repository
 from backend.app.repositories.job_repository import job_repository
 from backend.app.repositories.work_status_repository import work_status_repository
 from backend.app.schemas.ai import AIAction, AIInterpretation, AIReasonCode
@@ -128,3 +129,29 @@ def test_work_status_update(tmp_path) -> None:
     assert response.status_code == 200
     assert response.json()["status"] == "Applied"
     assert job_repository.get_job("work-status").rows[0].Work_Status == RowWorkStatus.APPLIED
+
+
+def test_delete_job_clears_temp_state(tmp_path) -> None:
+    upload_dir = tmp_path / "upload"
+    job_dir = tmp_path / "job"
+    upload_dir.mkdir()
+    job_dir.mkdir()
+    (upload_dir / "source.xlsx").write_text("source", encoding="utf-8")
+    (job_dir / "processed.xlsx").write_text("processed", encoding="utf-8")
+    job_repository.create_upload("clear-upload", upload_dir)
+    job_repository.create_job("clear-job", "clear-upload", job_dir)
+    _seed_job("clear-job", [_row("r1", "SIN1")])
+    work_status_repository.set("clear-job", "r1", RowWorkStatus.COPIED)
+    feedback_repository.add("clear-job", "r1", "accepted", None, None)
+    client = TestClient(app)
+
+    response = client.delete("/api/jobs/clear-job")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "cleared"}
+    assert job_repository.get_job("clear-job") is None
+    assert job_repository.get_upload("clear-upload") is None
+    assert work_status_repository.counts("clear-job") == {}
+    assert feedback_repository.counts("clear-job") == {}
+    assert not upload_dir.exists()
+    assert not job_dir.exists()
