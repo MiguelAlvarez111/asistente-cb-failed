@@ -26,12 +26,12 @@ type BadgeTone = "neutral" | "good" | "warn" | "danger";
 
 const WORK_STATUSES: WorkStatus[] = ["Pending", "Copied", "Applied", "Skipped"];
 const REVIEW_FILTERS: Array<{ label: string; value: ReviewFilter }> = [
-  { label: "Ready to Apply", value: "READY" },
-  { label: "Change Ticket", value: "CHANGE_TICKET" },
-  { label: "Complete Fields", value: "COMPLETE_INFO" },
-  { label: "Awaiting USAP", value: "AWAITING_USAP" },
-  { label: "Manual Review", value: "MANUAL_REVIEW" },
-  { label: "Remove from Ticket", value: "REMOVE_FROM_TICKET" }
+  { label: "Ready", value: "READY" },
+  { label: "Change", value: "CHANGE_TICKET" },
+  { label: "Complete", value: "COMPLETE_INFO" },
+  { label: "Awaiting", value: "AWAITING_USAP" },
+  { label: "Manual", value: "MANUAL_REVIEW" },
+  { label: "Remove", value: "REMOVE_FROM_TICKET" }
 ];
 const OVERRIDE_OPTIONS: Array<{ label: string; value: FileKind }> = [
   { label: "Original report", value: "CB_FAILED_REPORT" },
@@ -93,17 +93,6 @@ function recommendedProviderFromMatch(match: SINLookupMatch) {
   return providerSummary(match.recommended.last_title, match.recommended.first);
 }
 
-function fullCorrectionRow(row: Pick<RowResult, "Recommended_Last_Title" | "Recommended_First" | "Recommended_NPI" | "Recommended_CBCode" | "Recommended_Comments" | "Recommended_Source">) {
-  return [
-    row.Recommended_Last_Title,
-    row.Recommended_First,
-    row.Recommended_NPI,
-    row.Recommended_CBCode,
-    row.Recommended_Comments,
-    row.Recommended_Source
-  ].join("\t");
-}
-
 function fullCorrectionMatch(match: SINLookupMatch) {
   return [
     match.recommended.last_title,
@@ -113,6 +102,46 @@ function fullCorrectionMatch(match: SINLookupMatch) {
     match.recommended.comments,
     match.recommended.source
   ].join("\t");
+}
+
+function trustLine(match: SINLookupMatch) {
+  if (match.final_action === "CHANGE_TICKET") return "Change target validated in dictionary";
+  if (match.final_action === "COMPLETE_INFO") {
+    return match.recommended.cbcode ? `Dictionary validated CBCode ${match.recommended.cbcode}` : "Dictionary validated correction";
+  }
+  if (match.final_action === "AWAITING_USAP" || match.final_action === "ADD_TO_GE") return "Awaiting USAP confirmation";
+  if (match.final_action === "MANUAL_REVIEW") return "Manual review required";
+  if (match.final_action === "REMOVE_FROM_TICKET") return "Remove from ticket requires verification";
+  if (match.final_action === "MALFORMED_ROW") return "Invalid row";
+  return match.validation_status || "Correction reviewed";
+}
+
+function recommendedRows(match: SINLookupMatch) {
+  const allRows = [
+    { label: "Last - Title", value: match.recommended.last_title, color: match.cell_colors.last_title },
+    { label: "First", value: match.recommended.first, color: match.cell_colors.first },
+    { label: "NPI", value: match.recommended.npi, color: match.cell_colors.npi },
+    { label: "CBCode", value: match.recommended.cbcode, color: match.cell_colors.cbcode },
+    { label: "Comments", value: match.recommended.comments, color: match.cell_colors.comments },
+    { label: "Source", value: match.recommended.source, color: match.cell_colors.source }
+  ];
+  if (match.final_action === "CHANGE_TICKET") return allRows;
+  if (match.final_action === "COMPLETE_INFO") {
+    return allRows.filter((row) => ["NPI", "CBCode", "Source"].includes(row.label) && row.value);
+  }
+  if (match.final_action === "AWAITING_USAP") {
+    return allRows.filter((row) => ["CBCode", "Comments", "Source"].includes(row.label));
+  }
+  if (match.final_action === "MANUAL_REVIEW") {
+    return [{ label: "Reason", value: match.manual_reason || match.correction_summary || "Manual review required", color: "yellow" }];
+  }
+  if (match.final_action === "REMOVE_FROM_TICKET") {
+    return [
+      { label: "Comments", value: match.recommended.comments || "Remove from the ticket", color: match.cell_colors.comments || "yellow" },
+      { label: "Reason", value: match.manual_reason || "Verify before removing this provider", color: "yellow" }
+    ];
+  }
+  return allRows.filter((row) => row.value);
 }
 
 function rowToMatch(row: RowResult): SINLookupMatch {
@@ -163,23 +192,6 @@ function colorClass(color: string) {
   return "bg-gray-400";
 }
 
-function colorMeaning(field: string, color: string) {
-  const normalized = color.toLowerCase();
-  const labels: Record<string, string> = {
-    last_title: "Last name/title",
-    first: "First name",
-    npi: "NPI",
-    cbcode: "CBCode",
-    comments: "Comments",
-    source: "Source"
-  };
-  const label = labels[field] ?? field;
-  if (normalized === "red") return `${label} will change`;
-  if (normalized === "green") return field === "source" ? "Source validated by Dictionary" : `${label} completed or validated`;
-  if (normalized === "yellow") return `${label} needs review or USAP confirmation`;
-  return `${label}: no action`;
-}
-
 function ColorDot({ color }: { color: string }) {
   return <span className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${colorClass(color)}`} title={color} />;
 }
@@ -200,6 +212,11 @@ function ActionBadge({ action, label }: { action: string; label?: string }) {
 
 function ApplyBadge({ apply }: { apply: string }) {
   return <Badge tone={apply === "YES" ? "good" : "warn"}>{applyLabel(apply)}</Badge>;
+}
+
+function WorkStatusPill({ value }: { value: WorkStatus }) {
+  const tone: BadgeTone = value === "Applied" ? "good" : value === "Skipped" ? "warn" : "neutral";
+  return <Badge tone={tone}>{value}</Badge>;
 }
 
 function WorkStatusSelect({ value, onChange }: { value: WorkStatus; onChange: (status: WorkStatus) => void }) {
@@ -333,8 +350,17 @@ export default function App() {
       return regionMatch && filterMatch && (!needle || searchText.includes(needle) || sinMatch);
     });
   }, [reviewFilter, reviewSearch, selectedRegion, sortedRows]);
-  const singleActiveMatch = lookupResult?.match_count === 1 ? lookupResult.matches[0] : null;
-  const activeSingleRow = singleActiveMatch ? rows.find((row) => row.row_id === singleActiveMatch.row_id) : null;
+  const progressState = uploadMutation.isPending
+    ? { status: "INSPECTING", progress: 18, message: "Inspecting files..." }
+    : jobMutation.isPending
+      ? { status: "QUEUED", progress: 5, message: "Preparing files..." }
+      : jobQuery.data && (jobQuery.data.status !== "COMPLETED" || resultsQuery.isFetching)
+        ? {
+            status: jobQuery.data.status,
+            progress: jobQuery.data.status === "COMPLETED" ? 100 : jobQuery.data.progress,
+            message: jobQuery.data.status === "COMPLETED" ? "Completed" : jobQuery.data.message
+          }
+        : null;
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -354,21 +380,28 @@ export default function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      const isTyping = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.tagName === "SELECT";
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setActiveSection("search");
         window.setTimeout(() => searchInputRef.current?.focus(), 0);
       } else if (event.key === "Escape") {
         setSelectedRow(null);
-      } else if (!isTyping && event.key.toLowerCase() === "c" && singleActiveMatch) {
-        copyText("full row", fullCorrectionMatch(singleActiveMatch), singleActiveMatch.row_id);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [copyText, singleActiveMatch]);
+  }, []);
+
+  useEffect(() => {
+    setToast(null);
+  }, [activeSection]);
+
+  useEffect(() => {
+    if (jobQuery.data?.status === "COMPLETED") {
+      setActiveSection("search");
+      window.setTimeout(() => searchInputRef.current?.focus(), 100);
+    }
+  }, [jobQuery.data?.status]);
 
   if (sessionQuery.isLoading) {
     return <div className="p-8">Loading...</div>;
@@ -419,6 +452,8 @@ export default function App() {
         ))}
       </nav>
 
+      {progressState && <ProcessingProgress status={progressState.status} progress={progressState.progress} message={progressState.message} />}
+
       {activeSection === "search" && (
         <MainSearch
           inputRef={searchInputRef}
@@ -449,8 +484,6 @@ export default function App() {
           reviewSearch={reviewSearch}
           setReviewSearch={setReviewSearch}
           onOpenRow={setSelectedRow}
-          onCopy={copyText}
-          onStatus={updateStatus}
         />
       )}
 
@@ -541,7 +574,7 @@ function MainSearch({
             {isSearching ? "Searching..." : "Search"}
           </button>
         </div>
-        <p className="mt-3 text-xs text-ink/50">Tip: Cmd/Ctrl + K focuses search. Press C to copy the active full correction row.</p>
+        <p className="mt-3 text-xs text-ink/50">Tip: Cmd/Ctrl + K focuses search.</p>
       </div>
 
       {!lookupResult && (
@@ -595,6 +628,45 @@ function SummaryCards({ summary, jobStatus }: { summary: { ready: number; applie
   );
 }
 
+function ProcessingProgress({ status, progress, message }: { status: string; progress: number; message: string }) {
+  const rawProgress = Number.isFinite(progress) ? progress : 0;
+  const percent = Math.max(0, Math.min(100, Math.round(rawProgress <= 1 ? rawProgress * 100 : rawProgress)));
+  const visiblePercent = status === "QUEUED" ? Math.max(percent, 5) : status === "INSPECTING" ? Math.max(percent, 18) : percent;
+  const isFailed = status === "FAILED" || status === "EXPIRED";
+  const isCompleted = status === "COMPLETED";
+  const title =
+    status === "INSPECTING"
+      ? "Uploading / Inspecting files"
+      : status === "QUEUED"
+        ? "Preparing files..."
+        : status === "PROCESSING"
+          ? "Processing report..."
+          : isCompleted
+            ? "Completed"
+          : isFailed
+            ? "Processing failed"
+            : "Working...";
+  const displayMessage = message || (status === "QUEUED" ? "Preparing files..." : "Processing report...");
+
+  return (
+    <section className={`mx-auto mb-6 max-w-3xl rounded border p-5 shadow-sm ${isFailed ? "border-coral bg-red-50" : "border-line bg-white"}`}>
+      <div className="mb-3 flex items-center justify-between gap-4">
+        <div>
+          <p className="text-sm font-semibold">{title}</p>
+          <p className="text-sm text-ink/60">{displayMessage}</p>
+        </div>
+        <span className={`text-2xl font-semibold tabular-nums ${isFailed ? "text-coral" : "text-pine"}`}>{visiblePercent}%</span>
+      </div>
+      <div className="h-3 overflow-hidden rounded-full bg-field">
+        <div
+          className={`h-full rounded-full bg-gradient-to-r transition-all duration-700 ${isFailed ? "from-coral to-gold" : isCompleted ? "from-green-600 to-pine" : "from-pine via-green-500 to-gold animate-pulse"}`}
+          style={{ width: `${visiblePercent}%` }}
+        />
+      </div>
+    </section>
+  );
+}
+
 function SinResultCard({
   match,
   row,
@@ -608,13 +680,15 @@ function SinResultCard({
   onCopy: (label: string, value: string, rowId?: string) => void;
   onStatus: (status: WorkStatus) => void;
 }) {
+  const currentProvider = match.current_provider || providerSummary(match.current.last_title, match.current.first);
+  const nextProvider = recommendedProviderFromMatch(match);
   return (
-    <article className="rounded border border-line bg-white p-5 shadow-sm">
-      <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
+    <article className="rounded border border-line bg-white p-5 shadow-sm transition-opacity">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-xs uppercase tracking-wide text-ink/50">SIN</p>
           <h3 className="text-2xl font-semibold">{match.sin}</h3>
-          <p className="mt-1 text-sm text-ink/60">{match.region} · Row {match.row_index} · {match.current_provider}</p>
+          <p className="mt-1 text-sm text-ink/60">{match.region} · Row {match.row_index} · {currentProvider}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <ActionBadge action={match.final_action} label={match.quick_action} />
@@ -623,83 +697,57 @@ function SinResultCard({
         </div>
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-[1fr_1.25fr]">
-        <section className="rounded border border-line bg-field/50 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-ink/55">What to do</p>
-          <h4 className="mt-2 text-2xl font-semibold">{actionLabel(match.final_action, match.quick_action)}</h4>
-          <p className="mt-3 text-sm">{match.correction_summary || "Use the recommended values for this correction."}</p>
-          <p className="mt-3 rounded border border-line bg-white p-3 text-sm">{match.analyst_next_step}</p>
-        </section>
+      <p className="mt-4 w-fit rounded-full border border-line bg-field px-3 py-1 text-sm font-medium text-ink/75">{trustLine(match)}</p>
 
-        <section className="rounded border border-line p-4">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-ink/55">Copy values</p>
-            <button
-              className="rounded bg-pine px-3 py-2 text-sm font-semibold text-white hover:bg-pine/90"
-              onClick={() => onCopy("full row", fullCorrectionMatch(match), match.row_id)}
-            >
-              Copy full correction row
-            </button>
-          </div>
-          <div className="grid gap-2">
-            <CopyValue label="Last - Title" value={match.recommended.last_title} color={match.cell_colors.last_title} onCopy={() => onCopy("Last - Title", match.recommended.last_title, match.row_id)} />
-            <CopyValue label="First" value={match.recommended.first} color={match.cell_colors.first} onCopy={() => onCopy("First", match.recommended.first, match.row_id)} />
-            <CopyValue label="NPI" value={match.recommended.npi} color={match.cell_colors.npi} onCopy={() => onCopy("NPI", match.recommended.npi, match.row_id)} />
-            <CopyValue label="CBCode" value={match.recommended.cbcode} color={match.cell_colors.cbcode} onCopy={() => onCopy("CBCode", match.recommended.cbcode, match.row_id)} />
-            <CopyValue label="Comments" value={match.recommended.comments} color={match.cell_colors.comments} onCopy={() => onCopy("Comments", match.recommended.comments, match.row_id)} />
-            <CopyValue label="Source" value={match.recommended.source} color={match.cell_colors.source} onCopy={() => onCopy("Source", match.recommended.source, match.row_id)} />
-          </div>
-        </section>
+      <section className="mt-4 grid items-center gap-3 rounded border border-line bg-field/40 p-4 md:grid-cols-[1fr_auto_1fr]">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-ink/45">Current Provider</p>
+          <p className="mt-1 break-words text-xl font-semibold">{currentProvider}</p>
+        </div>
+        <div className="text-2xl font-semibold text-coral md:px-2" aria-hidden="true">→</div>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-ink/45">Recommended Provider</p>
+          <p className="mt-1 break-words text-xl font-semibold">{nextProvider}</p>
+        </div>
+      </section>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-[1.25fr_0.85fr]">
+        <RecommendedValuesCard match={match} />
+        <CurrentValuesCard match={match} />
       </div>
 
-      <CurrentRecommendedComparison match={match} />
-
-      <AdvancedDetails row={row} match={match} onOpen={onOpen} />
+      <AdvancedDetails row={row} match={match} onOpen={onOpen} onCopy={onCopy} />
     </article>
   );
 }
 
-function CopyValue({ label, value, color, onCopy }: { label: string; value: string; color: string; onCopy: () => void }) {
+function RecommendedValuesCard({ match }: { match: SINLookupMatch }) {
+  const rows = recommendedRows(match);
   return (
-    <div className="flex items-center justify-between gap-3 rounded border border-line bg-white px-3 py-2">
-      <div className="min-w-0">
-        <p className="flex items-center gap-2 text-xs uppercase text-ink/50"><ColorDot color={color} /> {label}</p>
-        <p className="truncate text-lg font-semibold">{value || "blank"}</p>
+    <section className="rounded border border-line p-4">
+      <h4 className="mb-3 text-sm font-semibold uppercase tracking-wide text-ink/55">Recommended correction</h4>
+      <div className="divide-y divide-line/70">
+        {rows.map((item) => (
+          <div key={item.label} className="grid grid-cols-[130px_1fr_auto] items-center gap-3 py-2">
+            <span className="text-sm text-ink/55">{item.label}</span>
+            <span className="min-w-0 break-words text-sm font-semibold text-ink select-text">{item.value || "blank"}</span>
+            <ColorDot color={item.color} />
+          </div>
+        ))}
       </div>
-      <button className="shrink-0 rounded border border-line px-3 py-1.5 text-sm hover:bg-field" onClick={onCopy}>
-        Copy
-      </button>
-    </div>
+    </section>
   );
 }
 
-function CurrentRecommendedComparison({ match }: { match: SINLookupMatch }) {
+function CurrentValuesCard({ match }: { match: SINLookupMatch }) {
   return (
-    <div className="mt-5 grid gap-4 lg:grid-cols-2">
-      <section className="rounded border border-line p-4">
-        <h4 className="mb-3 text-sm font-semibold uppercase tracking-wide text-ink/55">Current</h4>
-        <ValueLine label="Last - Title" value={match.current.last_title} />
-        <ValueLine label="First" value={match.current.first} />
-        <ValueLine label="NPI" value={match.current.npi} />
-        <ValueLine label="CBCode" value={match.current.cbcode} />
-      </section>
-      <section className="rounded border border-line p-4">
-        <h4 className="mb-3 text-sm font-semibold uppercase tracking-wide text-ink/55">Recommended</h4>
-        <ValueLine label="Last - Title" value={match.recommended.last_title} color={match.cell_colors.last_title} />
-        <ValueLine label="First" value={match.recommended.first} color={match.cell_colors.first} />
-        <ValueLine label="NPI" value={match.recommended.npi} color={match.cell_colors.npi} />
-        <ValueLine label="CBCode" value={match.recommended.cbcode} color={match.cell_colors.cbcode} />
-        <ValueLine label="Comments" value={match.recommended.comments} color={match.cell_colors.comments} />
-        <ValueLine label="Source" value={match.recommended.source} color={match.cell_colors.source} />
-        <div className="mt-4 grid gap-1 text-xs text-ink/65 sm:grid-cols-2">
-          {Object.entries(match.cell_colors)
-            .filter(([, color]) => color !== "gray")
-            .map(([field, color]) => (
-              <span key={field} className="flex items-center gap-2"><ColorDot color={color} /> {colorMeaning(field, color)}</span>
-            ))}
-        </div>
-      </section>
-    </div>
+    <section className="rounded border border-line bg-field/45 p-4">
+      <h4 className="mb-3 text-sm font-semibold uppercase tracking-wide text-ink/55">Current values</h4>
+      <ValueLine label="Last - Title" value={match.current.last_title} />
+      <ValueLine label="First" value={match.current.first} />
+      <ValueLine label="NPI" value={match.current.npi} />
+      <ValueLine label="CBCode" value={match.current.cbcode} />
+    </section>
   );
 }
 
@@ -712,11 +760,29 @@ function ValueLine({ label, value, color }: { label: string; value: string; colo
   );
 }
 
-function AdvancedDetails({ row, match, onOpen }: { row?: RowResult; match: SINLookupMatch; onOpen?: () => void }) {
+function AdvancedDetails({
+  row,
+  match,
+  onOpen,
+  onCopy
+}: {
+  row?: RowResult;
+  match: SINLookupMatch;
+  onOpen?: () => void;
+  onCopy?: (label: string, value: string, rowId?: string) => void;
+}) {
   return (
     <details className="mt-5 rounded border border-line p-4">
       <summary className="cursor-pointer text-sm font-semibold">Show validation details</summary>
       <div className="mt-3 grid gap-3 text-sm text-ink/70">
+        {onCopy && (
+          <button
+            className="w-fit rounded border border-line px-3 py-1.5 text-xs font-medium hover:bg-field"
+            onClick={() => onCopy("recommended row", fullCorrectionMatch(match), match.row_id)}
+          >
+            Copy recommended row
+          </button>
+        )}
         <p>Validation status: {match.validation_status}</p>
         {match.manual_reason && <p>Manual reason: {match.manual_reason}</p>}
         {row && (
@@ -792,9 +858,7 @@ function ReviewSheet({
   setReviewFilter,
   reviewSearch,
   setReviewSearch,
-  onOpenRow,
-  onCopy,
-  onStatus
+  onOpenRow
 }: {
   rows: RowResult[];
   regions: string[];
@@ -805,11 +869,9 @@ function ReviewSheet({
   reviewSearch: string;
   setReviewSearch: (value: string) => void;
   onOpenRow: (row: RowResult) => void;
-  onCopy: (label: string, value: string, rowId?: string) => void;
-  onStatus: (rowId: string, status: WorkStatus) => void;
 }) {
   return (
-    <section className="rounded border border-line bg-white p-4">
+    <section className="rounded border border-line bg-white p-4 shadow-sm">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-semibold">Review Sheet</h2>
@@ -847,44 +909,65 @@ function ReviewSheet({
           </button>
         ))}
       </div>
-      <div className="max-h-[620px] overflow-auto border border-line">
-        <table className="min-w-[1200px] text-left text-sm">
-          <thead className="sticky top-0 bg-field">
+      <div className="max-h-[640px] overflow-auto rounded border border-line">
+        <table className="min-w-[1420px] table-fixed text-left text-sm">
+          <colgroup>
+            <col style={{ width: 165 }} />
+            <col style={{ width: 62 }} />
+            <col style={{ width: 138 }} />
+            <col style={{ width: 132 }} />
+            <col style={{ width: 102 }} />
+            <col style={{ width: 190 }} />
+            <col style={{ width: 210 }} />
+            <col style={{ width: 148 }} />
+            <col style={{ width: 150 }} />
+            <col style={{ width: 210 }} />
+            <col style={{ width: 120 }} />
+          </colgroup>
+          <thead className="sticky top-0 z-10 bg-field">
             <tr>
-              <th className="p-2">SIN</th>
-              <th className="p-2">Row</th>
-              <th className="p-2">Action</th>
-              <th className="p-2">Apply</th>
-              <th className="p-2">Current Provider</th>
-              <th className="p-2">Recommended Provider</th>
-              <th className="p-2">Recommended NPI</th>
-              <th className="p-2">Recommended CBCode</th>
-              <th className="p-2">Comments</th>
-              <th className="p-2">Source</th>
+              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">SIN</th>
+              <th className="border-b border-line px-3 py-2 text-center text-xs font-semibold uppercase tracking-wide text-ink/55">Row</th>
+              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Action</th>
+              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Apply</th>
+              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Status</th>
+              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Current Provider</th>
+              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Recommended Provider</th>
+              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Recommended NPI</th>
+              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Recommended CBCode</th>
+              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Comments</th>
+              <th className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Source</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-line/80">
             {rows.map((row) => (
-              <tr key={row.row_id} className="cursor-pointer border-t border-line hover:bg-field" onClick={() => onOpenRow(row)}>
-                <td className="p-2">{row.SIN}</td>
-                <td className="p-2">{row.Row_Index}</td>
-                <td className="p-2"><ActionBadge action={row.Final_Action} label={row.Quick_Action} /></td>
-                <td className="p-2"><ApplyBadge apply={row.Apply_This} /></td>
-                <td className="p-2">{providerSummary(row.Current_Last_Title, row.Current_First)}</td>
-                <td className="p-2">{recommendedProvider(row)}</td>
-                <td className="p-2"><span className="mr-2"><ColorDot color={row.Cell_Color_NPI} /></span>{row.Recommended_NPI}</td>
-                <td className="p-2"><span className="mr-2"><ColorDot color={row.Cell_Color_CBCode} /></span>{row.Recommended_CBCode}</td>
-                <td className="p-2">{row.Recommended_Comments}</td>
-                <td className="p-2">
-                  <div className="flex items-center gap-2">
-                    <span><ColorDot color={row.Cell_Color_Source} /></span>
-                    <span>{row.Recommended_Source}</span>
-                    <button className="rounded border border-line px-2 py-1 text-xs hover:bg-white" onClick={(event) => {
-                      event.stopPropagation();
-                      onCopy("full row", fullCorrectionRow(row), row.row_id);
-                    }}>Copy row</button>
-                    <WorkStatusSelect value={row.Work_Status} onChange={(status) => onStatus(row.row_id, status)} />
-                  </div>
+              <tr
+                key={row.row_id}
+                className="h-14 cursor-pointer odd:bg-white even:bg-field/35 hover:bg-pine/5 focus:bg-pine/5 focus:outline-none"
+                tabIndex={0}
+                onClick={() => onOpenRow(row)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") onOpenRow(row);
+                }}
+              >
+                <td className="px-3 py-2 font-mono text-xs leading-5 text-ink/85" title={row.SIN}>
+                  <div className="max-h-10 overflow-hidden break-all">{row.SIN}</div>
+                </td>
+                <td className="px-3 py-2 text-center tabular-nums">{row.Row_Index}</td>
+                <td className="px-3 py-2 whitespace-nowrap"><ActionBadge action={row.Final_Action} label={row.Quick_Action} /></td>
+                <td className="px-3 py-2 whitespace-nowrap"><ApplyBadge apply={row.Apply_This} /></td>
+                <td className="px-3 py-2 whitespace-nowrap"><WorkStatusPill value={row.Work_Status} /></td>
+                <td className="px-3 py-2" title={providerSummary(row.Current_Last_Title, row.Current_First)}>
+                  <div className="max-h-10 overflow-hidden leading-5">{providerSummary(row.Current_Last_Title, row.Current_First)}</div>
+                </td>
+                <td className="px-3 py-2" title={recommendedProvider(row)}>
+                  <div className="max-h-10 overflow-hidden leading-5">{recommendedProvider(row)}</div>
+                </td>
+                <td className="px-3 py-2 font-mono whitespace-nowrap"><span className="mr-2"><ColorDot color={row.Cell_Color_NPI} /></span>{row.Recommended_NPI}</td>
+                <td className="px-3 py-2 font-mono whitespace-nowrap"><span className="mr-2"><ColorDot color={row.Cell_Color_CBCode} /></span>{row.Recommended_CBCode}</td>
+                <td className="truncate px-3 py-2" title={row.Recommended_Comments}>{row.Recommended_Comments}</td>
+                <td className="px-3 py-2 whitespace-nowrap" title={row.Recommended_Source}>
+                  <span className="mr-2"><ColorDot color={row.Cell_Color_Source} /></span>{row.Recommended_Source}
                 </td>
               </tr>
             ))}
@@ -928,7 +1011,7 @@ function UploadPanel({
             if (files.length) onUploadFiles(files);
           }}
         />
-        {uploadPending && <p className="text-sm text-ink/60">Inspecting files...</p>}
+        {uploadPending && <p className="text-sm text-ink/60">Inspecting selected files...</p>}
         {jobStatus && <p className="text-sm text-ink/60">Current job: {jobStatus}</p>}
       </div>
 
@@ -951,9 +1034,10 @@ function UploadPanel({
             {inspection.files.map((file) => {
               const override = fileOverrides[file.file_id] ?? file.kind;
               const correctionSignal = file.kind === "CORRECTIONS" && file.warnings.some((warning) => warning.toLowerCase().includes("correction signals"));
+              const details = [...file.warnings, ...file.missing_columns.map((col) => `Missing ${col}`)];
               return (
-                <div key={file.file_id} className="rounded border border-line p-4">
-                  <div className="mb-3 flex items-start justify-between gap-3">
+                <div key={file.file_id} className="rounded border border-line p-3">
+                  <div className="mb-2 flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <h4 className="truncate font-semibold">{file.filename}</h4>
                       <p className="text-sm text-ink/60">Detected: {FILE_KIND_LABELS[file.kind]}</p>
@@ -961,7 +1045,7 @@ function UploadPanel({
                     <Badge tone={file.kind === "UNKNOWN" ? "warn" : "neutral"}>{FILE_KIND_LABELS[override]}</Badge>
                   </div>
                   <p className="text-sm text-ink/65">{file.row_count} rows · {file.column_count} columns</p>
-                  {correctionSignal && <p className="mt-2 text-sm text-pine">Detected as Corrections because this file contains correction signals or correction values.</p>}
+                  {correctionSignal && <p className="mt-2 text-sm text-pine">Detected as Corrections because correction-style fields or values were found.</p>}
                   {(file.kind === "UNKNOWN" || override === "IGNORE") && <p className="mt-2 text-sm text-gold">Please confirm file type.</p>}
                   <label className="mt-3 block text-xs uppercase text-ink/50">Use as</label>
                   <select
@@ -973,9 +1057,16 @@ function UploadPanel({
                       <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
                   </select>
-                  {[...file.warnings, ...file.missing_columns.map((col) => `Missing ${col}`)].map((warning) => (
-                    <p className="mt-2 text-sm text-coral" key={warning}>{warning}</p>
-                  ))}
+                  {details.length > 0 && (
+                    <details className="mt-3 rounded border border-line bg-field/50 p-2">
+                      <summary className="cursor-pointer text-xs font-semibold text-ink/65">Detection details</summary>
+                      <div className="mt-2 space-y-1">
+                        {details.map((warning) => (
+                          <p className="text-xs text-coral" key={warning}>{warning}</p>
+                        ))}
+                      </div>
+                    </details>
+                  )}
                 </div>
               );
             })}
