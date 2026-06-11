@@ -96,6 +96,33 @@ def test_sin_lookup_exact_match(tmp_path) -> None:
     assert payload["matches"][0]["recommended"]["cbcode"] == "CB1"
 
 
+def test_sin_lookup_matches_hidden_characters_in_stored_row(tmp_path) -> None:
+    job_repository.create_job("lookup-hidden-stored", "upload", tmp_path)
+    stored_sin = "AB\u200bC\u200c123\ufeff"
+    _seed_job("lookup-hidden-stored", [_row("r1", stored_sin)])
+    client = TestClient(app)
+
+    response = client.get("/api/results/lookup-hidden-stored/lookup", params={"sin": "ABC123"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["match_count"] == 1
+    assert payload["matches"][0]["sin"] == stored_sin
+
+
+def test_sin_lookup_matches_hidden_characters_in_query(tmp_path) -> None:
+    job_repository.create_job("lookup-hidden-query", "upload", tmp_path)
+    _seed_job("lookup-hidden-query", [_row("r1", "ABC123")])
+    client = TestClient(app)
+
+    response = client.get("/api/results/lookup-hidden-query/lookup", params={"sin": "\ufeff AB\u200bC\n12\u200d3 "})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["match_count"] == 1
+    assert payload["matches"][0]["sin"] == "ABC123"
+
+
 def test_sin_lookup_no_match(tmp_path) -> None:
     job_repository.create_job("lookup-none", "upload", tmp_path)
     _seed_job("lookup-none", [_row("r1", "SIN1")])

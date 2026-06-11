@@ -22,10 +22,9 @@ def export_job(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Full export is unavailable")
         data = Path(job.full_export_path).read_bytes()
         filename = f"cb_failed_{job_id}_full.xlsx"
-        job_repository.delete_job_files(job_id)
     else:
         data = rows_to_workbook(job.rows, kind=kind)
-        filename = f"cb_failed_{job_id}_{kind}.xlsx"
+        filename = f"cb_failed_numbers_ready_{job_id}.xlsx" if kind == "numbers_ready" else f"cb_failed_{job_id}_{kind}.xlsx"
     return Response(
         data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

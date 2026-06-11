@@ -1,13 +1,59 @@
 from io import BytesIO
 
 import pandas as pd
+from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 
+from backend.app.main import app
+from backend.app.repositories.job_repository import job_repository
 from backend.app.schemas.ai import AIAction, AIInterpretation, AIReasonCode
 from backend.app.schemas.results import RowDetail, ValidationResult, ValidationStatus
 from backend.app.services.excel_exporter import rows_to_workbook
 
+EXPECTED_CLEAN_COLUMNS = [
+    "SIN",
+    "Row",
+    "Type",
+    "Action",
+    "Apply",
+    "Status",
+    "Current Provider",
+    "Current NPI",
+    "Current CBCode",
+    "Recommended Provider",
+    "Recommended NPI",
+    "Recommended CBCode",
+    "Comments",
+    "Source",
+    "Reason",
+]
 
-def _row(*, row_id: str = "r1", final_action: str = "COMPLETE_INFO", apply_this: str = "YES", source: str = "Dictionary") -> RowDetail:
+TECHNICAL_COLUMNS = [
+    "Bot_Accion",
+    "AI_Action",
+    "AI_Reason_Code",
+    "Validation_Details",
+    "Cell_Color_NPI",
+    "Cell_Color_CBCode",
+]
+
+
+def _row(
+    *,
+    row_id: str = "r1",
+    sin: str = "SIN1",
+    region: str = "MARYLAND",
+    final_action: str = "COMPLETE_INFO",
+    quick_action: str = "Complete fields",
+    apply_this: str = "YES",
+    source: str = "Dictionary",
+    current_last: str = "DOE",
+    current_first: str = "JANE",
+    recommended_last: str = "SMITH",
+    recommended_first: str = "ALICE",
+    manual_reason: str = "",
+    correction_summary: str = "Dictionary validated CBCode CB1.",
+) -> RowDetail:
     interp = AIInterpretation(
         action=AIAction.COMPLETE_INFO,
         reason_code=AIReasonCode.DIRECT_NPI,
@@ -24,8 +70,8 @@ def _row(*, row_id: str = "r1", final_action: str = "COMPLETE_INFO", apply_this:
     return RowDetail(
         row_id=row_id,
         sheet_name="Sheet1",
-        SIN="SIN1",
-        Region="MARYLAND",
+        SIN=sin,
+        Region=region,
         Row_Index=8,
         sanitized_original={"npi": "1234567890"},
         Bot_Accion="COMPLETE_INFO",
@@ -46,13 +92,27 @@ def _row(*, row_id: str = "r1", final_action: str = "COMPLETE_INFO", apply_this:
         AI_Explanation="ok",
         Final_Action=final_action,
         Final_Recommendation="ok",
-        Quick_Action="Complete fields",
+        Quick_Action=quick_action,
         Apply_This=apply_this,
         Current_Type="Provider",
         Recommended_Type="Provider",
+        Current_Last_Title=current_last,
+        Current_First=current_first,
+        Current_NPI="1234567890",
+        Current_CBCode="",
+        Recommended_Last_Title=recommended_last,
+        Recommended_First=recommended_first,
+        Recommended_NPI="1987654321",
         Recommended_CBCode="CB1",
+        Recommended_Comments="Change in the ticket",
         Recommended_Source=source,
+        Correction_Summary=correction_summary,
+        Manual_Reason=manual_reason,
+        Cell_Color_Last_Title="red",
+        Cell_Color_First="red",
+        Cell_Color_NPI="green",
         Cell_Color_CBCode="green",
+        Cell_Color_Comments="red",
         Cell_Color_Source="green",
         deterministic_interpretation=interp,
         ai_interpretation=interp,
@@ -66,31 +126,84 @@ def test_summary_export_returns_workbook_bytes() -> None:
 
 
 def test_apply_ready_export_filters_yes_rows() -> None:
-    data = rows_to_workbook([_row(row_id="ready", apply_this="YES"), _row(row_id="hold", apply_this="NO")], kind="apply_ready")
+    data = rows_to_workbook(
+        [_row(row_id="ready", sin="READY", apply_this="YES"), _row(row_id="hold", sin="HOLD", apply_this="NO")],
+        kind="apply_ready",
+    )
     df = pd.read_excel(BytesIO(data))
-    assert df["row_id"].tolist() == ["ready"]
-    assert "Current_Type" in df.columns
-    assert "Recommended_Type" in df.columns
-    assert "Recommended_CBCode" in df.columns
-    assert "Cell_Color_CBCode" in df.columns
+    assert df["SIN"].tolist() == ["READY"]
+    assert list(df.columns) == EXPECTED_CLEAN_COLUMNS
 
 
 def test_usap_export_filters_awaiting_and_clears_source() -> None:
     data = rows_to_workbook(
         [
-            _row(row_id="apply", final_action="COMPLETE_INFO", apply_this="YES", source="Dictionary"),
-            _row(row_id="usap", final_action="AWAITING_USAP", apply_this="NO", source="Dictionary"),
+            _row(row_id="apply", sin="APPLY", final_action="COMPLETE_INFO", apply_this="YES", source="Dictionary"),
+            _row(row_id="usap", sin="USAP", final_action="AWAITING_USAP", apply_this="NO", source="Dictionary"),
         ],
         kind="usap",
     )
     df = pd.read_excel(BytesIO(data)).fillna("")
-    assert df["row_id"].tolist() == ["usap"]
-    assert df.loc[0, "Recommended_Source"] == ""
+    assert df["SIN"].tolist() == ["USAP"]
+    assert df.loc[0, "Source"] == ""
 
 
-def test_numbers_ready_export_groups_by_region_and_includes_color_fields() -> None:
-    data = rows_to_workbook([_row(row_id="md", apply_this="YES")], kind="numbers_ready")
+def test_numbers_ready_export_is_clean_and_grouped_by_region() -> None:
+    data = rows_to_workbook(
+        [
+            _row(row_id="md", sin="MD1", region="MARYLAND", apply_this="YES"),
+            _row(row_id="tx", sin="TX1", region="TEXAS", apply_this="NO", final_action="MANUAL_REVIEW", quick_action="Manual review"),
+        ],
+        kind="numbers_ready",
+    )
+    workbook = load_workbook(BytesIO(data))
+    assert workbook.sheetnames[:4] == ["Summary", "Apply Ready", "MARYLAND", "TEXAS"]
+
     df = pd.read_excel(BytesIO(data), sheet_name="MARYLAND")
-    assert "Current_Type" in df.columns
-    assert "Recommended_CBCode" in df.columns
-    assert "Cell_Color_CBCode" in df.columns
+    assert list(df.columns) == EXPECTED_CLEAN_COLUMNS
+    assert all(column not in df.columns for column in TECHNICAL_COLUMNS)
+    assert df.loc[0, "Current Provider"] == "DOE, JANE"
+    assert df.loc[0, "Recommended Provider"] == "SMITH, ALICE"
+
+    apply_ready = pd.read_excel(BytesIO(data), sheet_name="Apply Ready")
+    assert list(apply_ready.columns) == EXPECTED_CLEAN_COLUMNS
+    assert apply_ready["SIN"].tolist() == ["MD1"]
+
+    summary = pd.read_excel(BytesIO(data), sheet_name="Summary")
+    assert {"Total rows", "Ready to Apply", "Change Ticket", "Complete Fields"}.issubset(set(summary["Metric"]))
+
+
+def test_numbers_ready_styles_visible_recommended_cells_without_color_columns() -> None:
+    data = rows_to_workbook([_row(row_id="md", apply_this="YES")], kind="numbers_ready")
+    workbook = load_workbook(BytesIO(data))
+    worksheet = workbook["MARYLAND"]
+    headers = [cell.value for cell in worksheet[1]]
+    assert "Cell_Color_NPI" not in headers
+    assert "Cell_Color_CBCode" not in headers
+
+    columns = {header: index + 1 for index, header in enumerate(headers)}
+    assert worksheet.cell(row=2, column=columns["Recommended Provider"]).fill.fgColor.rgb == "FFFFC7CE"
+    assert worksheet.cell(row=2, column=columns["Recommended NPI"]).fill.fgColor.rgb == "FFC6EFCE"
+    assert worksheet.cell(row=2, column=columns["Recommended CBCode"]).fill.fgColor.rgb == "FFC6EFCE"
+    assert worksheet.cell(row=2, column=columns["Comments"]).fill.fgColor.rgb == "FFFFC7CE"
+    assert worksheet.cell(row=2, column=columns["Source"]).fill.fgColor.rgb == "FFC6EFCE"
+
+
+def test_full_export_download_does_not_delete_job_files(tmp_path) -> None:
+    job_dir = tmp_path / "job"
+    job_dir.mkdir()
+    full_export_path = job_dir / "processed_full.xlsx"
+    full_export_path.write_bytes(b"raw workbook bytes")
+    job = job_repository.create_job("export-no-delete", "upload", job_dir)
+    job.full_export_path = str(full_export_path)
+    client = TestClient(app)
+
+    try:
+        response = client.get("/api/export/export-no-delete", params={"kind": "full"})
+
+        assert response.status_code == 200
+        assert full_export_path.exists()
+        assert job_dir.exists()
+        assert job_repository.get_job("export-no-delete") is not None
+    finally:
+        job_repository.jobs.pop("export-no-delete", None)
