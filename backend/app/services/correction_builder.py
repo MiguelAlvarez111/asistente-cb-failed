@@ -8,6 +8,7 @@ from backend.app.schemas.results import CorrectionInstruction, FinalAction, Vali
 
 AWAITING_USAP_CBCODE = "Awaiting for USAP confirmation"
 DEGREE_TOKENS = {"MD", "DO", "CRNA", "MDA", "DPM", "PA", "NP", "RN"}
+SUFFIX_TOKENS = {"JR", "SR", "II", "III", "IV", "V"}
 
 DISPLAY_LABELS = {
     FinalAction.COMPLETE_INFO: "Complete fields",
@@ -39,12 +40,32 @@ def _split_provider_name(provider_name: str | None) -> tuple[str, str]:
     parts = name.split()
     if len(parts) == 1:
         return parts[0], ""
-    return _strip_degree_suffix(parts[0]), _strip_degree_suffix(" ".join(parts[1:]))
+    last_parts = [parts[0]]
+    first_start = 1
+    if len(parts) > 1 and _token(parts[1]) in SUFFIX_TOKENS:
+        last_parts.append(parts[1])
+        first_start = 2
+    return _strip_degree_suffix(" ".join(last_parts)), _strip_degree_suffix(" ".join(parts[first_start:]))
 
 
 def _strip_degree_suffix(value: str) -> str:
     tokens = [token for token in value.strip().split() if token.upper().strip(".,") not in DEGREE_TOKENS]
     return " ".join(tokens).strip()
+
+
+def _token(value: Any) -> str:
+    return re.sub(r"[^A-Z0-9]+", "", _clean(value).upper())
+
+
+def _is_surgeon_role(row: dict[str, Any], match: DictionaryMatch | None = None) -> bool:
+    return _role_from_row(row, match).strip().lower() == "surgeon"
+
+
+def _name_completeness_score(last: str, first: str) -> tuple[int, int]:
+    tokens = [_token(token) for token in f"{last} {first}".split()]
+    useful = [token for token in tokens if token and token not in DEGREE_TOKENS]
+    suffix_count = sum(1 for token in useful if token in SUFFIX_TOKENS)
+    return len(useful), suffix_count
 
 
 def _role_from_row(row: dict[str, Any], match: DictionaryMatch | None = None) -> str:
@@ -112,11 +133,25 @@ def _has_useful_completion(row: dict[str, Any], match: DictionaryMatch, recommen
 
 def _npi_registry_name_parts(validation: ValidationResult) -> tuple[str, str]:
     registry = validation.npi_registry_data or {}
-    last = _strip_degree_suffix(_clean(registry.get("last_name")))
+    last = _strip_degree_suffix(
+        " ".join(part for part in [_clean(registry.get("last_name")), _clean(registry.get("name_suffix"))] if part)
+    )
     first = _strip_degree_suffix(" ".join(part for part in [_clean(registry.get("first_name")), _clean(registry.get("middle_name"))] if part))
     if last or first:
         return last, first
     return _split_provider_name(validation.npi_registry_name)
+
+
+def _best_dictionary_match_name(row: dict[str, Any], match: DictionaryMatch, validation: ValidationResult) -> tuple[str, str]:
+    dictionary_last, dictionary_first = _split_provider_name(match.provider_name)
+    if not _is_surgeon_role(row, match):
+        return dictionary_last, dictionary_first
+    registry_last, registry_first = _npi_registry_name_parts(validation)
+    if not (registry_last or registry_first):
+        return dictionary_last, dictionary_first
+    if _name_completeness_score(registry_last, registry_first) > _name_completeness_score(dictionary_last, dictionary_first):
+        return registry_last, registry_first
+    return dictionary_last, dictionary_first
 
 
 def _best_npi_change_name(row: dict[str, Any], interpretation: AIInterpretation, validation: ValidationResult) -> tuple[str, str, str]:
@@ -163,7 +198,7 @@ class CorrectionBuilder:
 
         if final_action == FinalAction.CHANGE_TICKET:
             if match:
-                recommended_last, recommended_first = _split_provider_name(match.provider_name)
+                recommended_last, recommended_first = _best_dictionary_match_name(row, match, validation)
                 instruction.apply_this = "YES"
                 instruction.cell_color_last_title = "red"
                 instruction.cell_color_first = "red"
@@ -225,7 +260,7 @@ class CorrectionBuilder:
 
         if final_action == FinalAction.COMPLETE_INFO:
             if match:
-                recommended_last, recommended_first = _split_provider_name(match.provider_name)
+                recommended_last, recommended_first = _best_dictionary_match_name(row, match, validation)
                 completion_color = "red" if _role_from_row(row, match).lower() == "provider" else "green"
                 instruction.recommended_last_title = recommended_last
                 instruction.recommended_first = recommended_first

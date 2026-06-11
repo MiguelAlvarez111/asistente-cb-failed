@@ -2,7 +2,7 @@ import pandas as pd
 
 from backend.app.schemas.dictionaries import DictionaryType
 from backend.app.schemas.results import FinalAction, ValidationStatus
-from backend.app.services.correction_builder import AWAITING_USAP_CBCODE, CorrectionBuilder
+from backend.app.services.correction_builder import AWAITING_USAP_CBCODE, CorrectionBuilder, _split_provider_name
 from backend.app.services.decision_engine import choose_final_action
 from backend.app.services.deterministic_interpreter import interpret_row
 from backend.app.services.dictionary_loader import DictionaryIndex, LoadedDictionary
@@ -39,6 +39,11 @@ def _run(row: dict[str, str], index: DictionaryIndex):
     final_action, recommendation, needs_review = choose_final_action(interpretation, validation)
     instruction = CorrectionBuilder().build(row, interpretation, validation, final_action, recommendation, needs_review)
     return instruction, validation
+
+
+def test_provider_name_split_keeps_suffix_in_last_title() -> None:
+    assert _split_provider_name("MCCARTY III THOMAS RAYMOND") == ("MCCARTY III", "THOMAS RAYMOND")
+    assert _split_provider_name("MCCARTY III MD,THOMAS RAYMOND") == ("MCCARTY III", "THOMAS RAYMOND")
 
 
 def test_change_ticket_chg_to_with_cbcode_builds_recommended_fields() -> None:
@@ -93,6 +98,56 @@ def test_correct_provider_with_cbcode_builds_change_ticket_instruction() -> None
     assert instruction.apply_this == "YES"
     assert instruction.recommended_cbcode == "H5290"
     assert instruction.recommended_npi == "1111111111"
+    assert instruction.recommended_source == "Dictionary"
+
+
+def test_surgeon_dictionary_match_uses_match_npi_for_registry_name_completion(monkeypatch) -> None:
+    calls: list[str | None] = []
+
+    def fake_registry(npi: str | None):
+        calls.append(npi)
+        return {
+            "last_name": "MCCARTY",
+            "name_suffix": "III",
+            "first_name": "THOMAS",
+            "middle_name": "RAYMOND",
+            "credential": "M.D., M.P.H.",
+            "full_name": "MCCARTY III, THOMAS RAYMOND M.D., M.P.H.",
+            "npi": str(npi or ""),
+        }
+
+    monkeypatch.setattr("backend.app.services.validator.get_npi_data", fake_registry)
+    row = {
+        "type": "Surgeon",
+        "last_title": "VIROLIYA",
+        "first": "KRINA BHIMJIBHAI",
+        "npi": "1396373676",
+        "cbcode": "Awaiting for USAP’s Confirmation",
+        "comments": "Correct provider MCCARTY III MD,THOMAS RAYMOND with CB code TX20541",
+    }
+    index = _dictionary(
+        [
+            {
+                "npi_number": "1376955047",
+                "number": "TX20541",
+                "last_name": "MCCARTY III",
+                "first_name": "THOMAS",
+                "middle_name": "RAYMOND",
+                "deactivation_flag": "",
+            }
+        ]
+    )
+
+    instruction, validation = _run(row, index)
+
+    assert calls == ["1376955047"]
+    assert validation.status == ValidationStatus.CBCODE_FOUND
+    assert instruction.action == FinalAction.CHANGE_TICKET
+    assert instruction.apply_this == "YES"
+    assert instruction.recommended_last_title == "MCCARTY III"
+    assert instruction.recommended_first == "THOMAS RAYMOND"
+    assert instruction.recommended_npi == "1376955047"
+    assert instruction.recommended_cbcode == "TX20541"
     assert instruction.recommended_source == "Dictionary"
 
 

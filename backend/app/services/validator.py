@@ -24,6 +24,10 @@ def _role_dictionary_types(row: dict[str, Any] | None) -> tuple[set[DictionaryTy
     return None, None
 
 
+def _is_surgeon(row: dict[str, Any] | None) -> bool:
+    return str((row or {}).get("type", "") or "").strip().lower() == "surgeon"
+
+
 def _lookup_matches(
     interpretation: AIInterpretation,
     index: DictionaryIndex,
@@ -73,7 +77,10 @@ def validate_interpretation(interpretation: AIInterpretation, index: DictionaryI
             raw_matches = fallback_matches
             role_mismatch = True
     matches = resolve_effective_matches(raw_matches, row)
-    npi_data = get_npi_data(interpretation.target_npi)
+    registry_npi = interpretation.target_npi
+    if not registry_npi and not role_mismatch and _is_surgeon(row) and len(matches) == 1:
+        registry_npi = matches[0].npi
+    npi_data = get_npi_data(registry_npi)
 
     if role_mismatch and matches:
         return ValidationResult(
