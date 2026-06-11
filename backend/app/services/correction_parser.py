@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Callable
 
 import pandas as pd
 
@@ -15,7 +16,11 @@ def _find_header_row(raw: pd.DataFrame) -> int | None:
     return None
 
 
-def parse_corrections(path: Path) -> dict[str, AIInterpretation]:
+def parse_corrections(
+    path: Path,
+    *,
+    interpret: Callable[[dict[str, str]], AIInterpretation] = interpret_row,
+) -> dict[str, AIInterpretation]:
     corrections: dict[str, AIInterpretation] = {}
     xls = pd.ExcelFile(path)
     for sheet_name in xls.sheet_names:
@@ -33,8 +38,7 @@ def parse_corrections(path: Path) -> dict[str, AIInterpretation]:
             sin = str(row_dict.get("sin", "")).strip()
             if not sin:
                 continue
-            interpretation = interpret_row(row_dict)
+            interpretation = interpret(row_dict)
             if sin not in corrections or not interpretation.is_pending_usap:
                 corrections[sin] = interpretation
     return corrections
-

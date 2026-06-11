@@ -31,6 +31,24 @@ def test_add_to_ge_parsing() -> None:
     assert result.target_npi == "1234567890"
 
 
+def test_chg_to_wins_over_add_to_ge_pending_npi() -> None:
+    result = interpret_row(
+        {
+            "npi": "CHG TO SHAH",
+            "cbcode": "ADD TO GE 1609175306",
+            "comments": "",
+        }
+    )
+
+    assert result.action == AIAction.CHANGE_TICKET
+    assert result.reason_code == AIReasonCode.CHG_TO
+    assert result.target_provider_name == "SHAH"
+    assert result.target_npi == "1609175306"
+    assert result.target_cbcode is None
+    assert result.requires_add_to_ge is False
+    assert result.is_pending_usap is True
+
+
 def test_remove_from_ticket_parsing() -> None:
     result = interpret_row({"npi": "", "cbcode": "", "comments": "Remove from the ticket"})
     assert result.action == AIAction.REMOVE_FROM_TICKET
@@ -58,6 +76,21 @@ def test_correct_npi_with_cbcode_parsing() -> None:
             "npi": "1801916341",
             "cbcode": "Awaiting for USAP’s Confirmation",
             "comments": "Correct NPI 1255593950 with CB code DN6835",
+        }
+    )
+
+    assert result.action == AIAction.CHANGE_TICKET
+    assert result.reason_code == AIReasonCode.CORRECT_PROVIDER_NPI
+    assert result.target_npi == "1255593950"
+    assert result.target_cbcode == "DN6835"
+
+
+def test_correct_npi_with_implicit_cbcode_parsing() -> None:
+    result = interpret_row(
+        {
+            "npi": "1801916341",
+            "cbcode": "Awaiting for USAP’s Confirmation",
+            "comments": "Correct NPI 1255593950 with DN6835. One you provided on this report is for an anesthesia MD in Florida.",
         }
     )
 

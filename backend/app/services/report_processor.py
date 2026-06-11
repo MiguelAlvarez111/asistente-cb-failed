@@ -72,11 +72,81 @@ def _should_replace_correction(existing: AIInterpretation | None, incoming: AIIn
     return True
 
 
+def _correction_haystack(row: dict[str, str]) -> str:
+    return " ".join(
+        str(row.get(key, "") or "")
+        for key in ["npi", "cbcode", "comments", "source"]
+    ).lower()
+
+
+def _should_ai_review_correction(row: dict[str, str], deterministic: AIInterpretation) -> bool:
+    if deterministic.confidence < 0.7:
+        return True
+    haystack = _correction_haystack(row)
+    has_free_text = bool(str(row.get("comments", "") or "").strip())
+    has_concrete_signal = any(
+        signal in haystack
+        for signal in [
+            "chg to",
+            "correct",
+            "change in the ticket",
+            "with npi",
+            "with cb",
+        ]
+    )
+    if deterministic.action in {AIAction.AWAITING_USAP, AIAction.UNKNOWN} and (has_free_text or has_concrete_signal):
+        return True
+    if deterministic.action == AIAction.ADD_TO_GE and has_concrete_signal:
+        return True
+    return False
+
+
 class ReportProcessor:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self.ai = AIInterpreter(self.settings)
         self.correction_builder = CorrectionBuilder()
+        self._reset_ai_usage()
+
+    def _reset_ai_usage(self) -> None:
+        self._ai_usage_rows = 0
+        self._ai_usage_tokens = 0
+        self._ai_usage_models: set[str] = set()
+
+    def _record_ai_usage(self, model_used: str | None, tokens: int) -> None:
+        self._ai_usage_rows = getattr(self, "_ai_usage_rows", 0) + 1
+        self._ai_usage_tokens = getattr(self, "_ai_usage_tokens", 0) + tokens
+        if model_used:
+            models = getattr(self, "_ai_usage_models", set())
+            models.add(model_used)
+            self._ai_usage_models = models
+
+    def _interpret_correction_row(self, row: dict[str, str]) -> AIInterpretation:
+        deterministic = interpret_row(row)
+        settings = getattr(self, "settings", None)
+        ai = getattr(self, "ai", None)
+        if not settings or not ai or not settings.ai_enabled:
+            return deterministic
+        if getattr(self, "_ai_usage_rows", 0) >= settings.max_ai_rows_per_job:
+            return deterministic
+        if not _should_ai_review_correction(row, deterministic):
+            return deterministic
+
+        ai_interpretation, model_used, tokens = ai.interpret(build_ai_payload(row))
+        self._record_ai_usage(model_used, tokens)
+        if ai_interpretation.action == AIAction.MANUAL_REVIEW and not _is_concrete_correction(ai_interpretation):
+            return deterministic
+        if ai_interpretation.confidence < settings.ai_confidence_fallback_threshold:
+            return deterministic
+        if _is_concrete_correction(ai_interpretation) and (
+            not _is_concrete_correction(deterministic)
+            or deterministic.action in {AIAction.AWAITING_USAP, AIAction.ADD_TO_GE, AIAction.UNKNOWN}
+            or ai_interpretation.confidence >= deterministic.confidence
+        ):
+            return ai_interpretation
+        if deterministic.confidence < 0.7 and ai_interpretation.confidence > deterministic.confidence:
+            return ai_interpretation
+        return deterministic
 
     def process(self, job_id: str, upload_id: str) -> None:
         started = perf_counter()
@@ -87,6 +157,7 @@ class ReportProcessor:
             return
 
         try:
+            self._reset_ai_usage()
             dictionaries = self._load_dictionaries(upload.files)
             dictionary_index = DictionaryIndex(dictionaries)
             corrections = self._load_corrections(upload.files)
@@ -96,9 +167,9 @@ class ReportProcessor:
 
             rows: list[RowDetail] = []
             processed_sheets: dict[str, pd.DataFrame] = {}
-            ai_rows = 0
-            token_estimate = 0
-            models_used: set[str] = set()
+            ai_rows = getattr(self, "_ai_usage_rows", 0)
+            token_estimate = getattr(self, "_ai_usage_tokens", 0)
+            models_used: set[str] = set(getattr(self, "_ai_usage_models", set()))
             row_count = sum(item.inspection.row_count for item in report_files)
             if row_count > self.settings.max_rows_per_job:
                 raise ValueError(f"Job exceeds MAX_ROWS_PER_JOB={self.settings.max_rows_per_job}.")
@@ -244,7 +315,7 @@ class ReportProcessor:
         corrections: dict[str, AIInterpretation] = {}
         for item in files:
             if item.inspection.kind == FileKind.CORRECTIONS:
-                parsed = parse_corrections(Path(item.path))
+                parsed = parse_corrections(Path(item.path), interpret=self._interpret_correction_row)
                 for sin, interpretation in parsed.items():
                     if _should_replace_correction(corrections.get(sin), interpretation):
                         corrections[sin] = interpretation

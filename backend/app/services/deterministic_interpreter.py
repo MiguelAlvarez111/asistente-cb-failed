@@ -110,17 +110,6 @@ def interpret_row(row: dict[str, str]) -> AIInterpretation:
             explanation="Remove-from-ticket instruction detected.",
         )
 
-    add_to_ge_match = re.search(r"add\s+to\s+ge(?:\s+(?P<npi>\d{10}))?", lower, re.IGNORECASE)
-    if add_to_ge_match:
-        return _make(
-            AIAction.ADD_TO_GE,
-            AIReasonCode.ADD_TO_GE_NPI if add_to_ge_match.group("npi") else AIReasonCode.ADD_TO_GE,
-            npi=add_to_ge_match.group("npi"),
-            add_to_ge=True,
-            confidence=1,
-            explanation="ADD TO GE instruction detected.",
-        )
-
     npi_values = re.findall(r"\b\d{10}\b", npi_field)
     if len(npi_values) >= 2 and "awaiting" in cbcode_field.lower() and ("change in the ticket" in lower or source.lower() == "usap"):
         return _make(
@@ -135,13 +124,31 @@ def interpret_row(row: dict[str, str]) -> AIInterpretation:
 
     chg_match = re.search(r"chg\s+to\s+(?P<name>.+)", npi_field, re.IGNORECASE) or re.search(r"chg\s+to\s+(?P<name>.+)", comments, re.IGNORECASE)
     if chg_match:
+        add_to_ge_match = re.search(r"add\s+to\s+ge(?:\s+(?P<npi>\d{10}))?", haystack, re.IGNORECASE)
         return _make(
             AIAction.CHANGE_TICKET,
             AIReasonCode.CHG_TO,
             provider_name=chg_match.group("name").strip(),
+            npi=add_to_ge_match.group("npi") if add_to_ge_match and add_to_ge_match.group("npi") else None,
             cbcode=_target_cbcode(cbcode_field),
+            pending=bool(add_to_ge_match),
             confidence=0.95,
-            explanation="CHG TO provider instruction detected.",
+            explanation=(
+                "CHG TO provider instruction detected; target NPI is awaiting GE/CBCode setup."
+                if add_to_ge_match
+                else "CHG TO provider instruction detected."
+            ),
+        )
+
+    add_to_ge_match = re.search(r"add\s+to\s+ge(?:\s+(?P<npi>\d{10}))?", lower, re.IGNORECASE)
+    if add_to_ge_match:
+        return _make(
+            AIAction.ADD_TO_GE,
+            AIReasonCode.ADD_TO_GE_NPI if add_to_ge_match.group("npi") else AIReasonCode.ADD_TO_GE,
+            npi=add_to_ge_match.group("npi"),
+            add_to_ge=True,
+            confidence=1,
+            explanation="ADD TO GE instruction detected.",
         )
 
     cb_match = re.search(r"(?:correct|pending addition of correct)\s+provider\s+(?P<name>.*?)\s+with\s+cb\s*code\s+(?P<cb>[A-Za-z0-9_-]+)", comments, re.IGNORECASE)
@@ -180,7 +187,11 @@ def interpret_row(row: dict[str, str]) -> AIInterpretation:
             explanation="USAP correction with target NPI is awaiting CBCode." if is_pending_cbcode else "Correct provider with NPI instruction detected.",
         )
 
-    correct_npi_cb_match = re.search(r"correct\s+npi\s+(?P<npi>\d{10})\s+with\s+cb\s*code\s+(?P<cb>[A-Za-z0-9_-]+)", comments, re.IGNORECASE)
+    correct_npi_cb_match = re.search(
+        r"correct\s+npi\s+(?P<npi>\d{10})\s+with\s+(?:cb\s*code\s+)?(?P<cb>[A-Za-z0-9_-]+)",
+        comments,
+        re.IGNORECASE,
+    )
     if correct_npi_cb_match:
         return _make(
             AIAction.CHANGE_TICKET,
