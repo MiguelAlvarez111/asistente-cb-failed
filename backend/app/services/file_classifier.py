@@ -215,6 +215,18 @@ def _inspect_excel(path: Path) -> FileInspection | None:
 
 def inspect_file(path: Path, file_id: str, filename: str) -> FileInspection:
     warnings: list[str] = []
+    if filename == ".DS_Store" or filename.startswith("~$"):
+        return FileInspection(
+            file_id=file_id,
+            filename=filename,
+            kind=FileKind.IGNORE,
+            row_count=0,
+            column_count=0,
+            columns_found=[],
+            missing_columns=[],
+            warnings=["Temporary or system file ignored."],
+            dictionary_detection=None,
+        )
     try:
         if path.suffix.lower() in {".xlsx", ".xls"}:
             inspection = _inspect_excel(path)

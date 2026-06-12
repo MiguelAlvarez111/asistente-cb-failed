@@ -34,6 +34,17 @@ def test_report_workbook_without_correction_signals_is_report(tmp_path) -> None:
     assert inspection.kind == FileKind.CB_FAILED_REPORT
 
 
+def test_temporary_spreadsheet_lock_file_is_ignored(tmp_path) -> None:
+    path = tmp_path / "~$FINELLI FL FAILED TO UPLOAD REPORT.xlsx"
+    path.write_bytes(b"temporary lock")
+
+    inspection = inspect_file(path, "file1", path.name)
+
+    assert inspection.kind == FileKind.IGNORE
+    assert inspection.row_count == 0
+    assert inspection.warnings == ["Temporary or system file ignored."]
+
+
 def test_report_columns_with_chg_to_signal_is_corrections(tmp_path) -> None:
     path = tmp_path / "corrections.xlsx"
     pd.DataFrame([["MD", "ABRAHAM", "JEBY", "CHG TO WING", "MD9019", "P1", "6/1/2026", "SIN1"]], columns=REPORT_COLUMNS).to_excel(path, index=False)
