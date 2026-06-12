@@ -483,3 +483,36 @@ def test_ai_disabled_free_text_fallback_does_not_invent_direct_cbcode(tmp_path) 
     assert result.action == AIAction.UNKNOWN
     assert result.reason_code == AIReasonCode.NO_SIGNAL
     assert result.target_cbcode is None
+
+
+def test_plain_awaiting_placeholder_does_not_call_ai(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "plain_awaiting.xlsx"
+    pd.DataFrame(
+        [
+            {
+                "Type": "Surgeon",
+                "Last - Title": "FREIBERG",
+                "First": "STEPHEN L",
+                "NPI": "1922445857",
+                "CBcode": "Awaiting for USAP’s Confirmation",
+                "Comments": "",
+                "Source": "",
+                "SIN": "SIN-plain-awaiting",
+            }
+        ]
+    ).to_excel(path, index=False)
+    settings = Settings()
+    settings.ai_enabled = True
+    settings.openai_api_key = "test"
+    processor = ReportProcessor(settings)
+
+    def fail_interpret(payload):
+        raise AssertionError(f"AI should not be called for plain awaiting placeholder: {payload}")
+
+    monkeypatch.setattr(processor.ai, "interpret", fail_interpret)
+
+    corrections = processor._load_corrections([_correction_file(str(path))])
+
+    result = corrections["SIN-plain-awaiting"]
+    assert result.action == AIAction.AWAITING_USAP
+    assert processor._ai_usage_rows == 0

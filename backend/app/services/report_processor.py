@@ -133,6 +133,21 @@ def _looks_like_free_text(value: str) -> bool:
     return len(text) > 24 and not COMPACT_OPERATIONAL_VALUE_RE.fullmatch(text)
 
 
+def _has_action_language(value: str) -> bool:
+    return bool(re.search(r"\b(chg|change|correct|replace|switch|right|use)\b", value.lower()))
+
+
+def _is_generic_pending_placeholder(value: str) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return False
+    return bool(
+        ("awaiting" in text or "pending" in text or "add to ge" in text)
+        and not NPI_RE.search(text)
+        and not _has_action_language(text)
+    )
+
+
 def _has_suspicious_operational_text(row: dict[str, str]) -> bool:
     npi = str(row.get("npi", "") or "").strip()
     cbcode = str(row.get("cbcode", "") or "").strip()
@@ -142,9 +157,9 @@ def _has_suspicious_operational_text(row: dict[str, str]) -> bool:
     if npi and not re.fullmatch(r"\d{10}(?:\s+\d{10})*", npi) and not re.match(r"^\s*chg\s+to\b", npi, re.IGNORECASE):
         if _looks_like_free_text(npi):
             return True
-    if cbcode and not COMPACT_OPERATIONAL_VALUE_RE.fullmatch(cbcode) and _looks_like_free_text(cbcode):
+    if cbcode and not _is_generic_pending_placeholder(cbcode) and not COMPACT_OPERATIONAL_VALUE_RE.fullmatch(cbcode) and _looks_like_free_text(cbcode):
         return True
-    if comments and _looks_like_free_text(comments):
+    if comments and not _is_generic_pending_placeholder(comments) and _looks_like_free_text(comments):
         return True
     if source and source.lower() not in KNOWN_SOURCE_VALUES and _looks_like_free_text(source):
         return True
@@ -249,9 +264,11 @@ class ReportProcessor:
 
         try:
             self._reset_ai_usage()
+            job_repository.update_job(job_id, progress=0.06, message="Loading dictionaries")
             dictionaries = self._load_dictionaries(upload.files)
             dictionary_index = DictionaryIndex(dictionaries)
-            corrections = self._load_corrections(upload.files)
+            job_repository.update_job(job_id, progress=0.08, message="Interpreting correction files")
+            corrections = self._load_corrections(upload.files, job_id=job_id, progress_start=0.08, progress_end=0.35)
             report_files = [item for item in upload.files if item.inspection.kind == FileKind.CB_FAILED_REPORT]
             if not report_files:
                 raise ValueError("No CB Failed report file detected.")
@@ -362,8 +379,10 @@ class ReportProcessor:
                         rows.append(result)
                         processed_rows.append(_apply_output(row_dict, result))
                     processed_sheets[sheet_name] = pd.DataFrame(processed_rows)
-                    job_repository.update_job(job_id, progress=min(0.95, len(rows) / max(row_count, 1)), message=f"Processed {sheet_name}")
+                    progress = 0.35 + min(0.6, 0.6 * len(rows) / max(row_count, 1))
+                    job_repository.update_job(job_id, progress=min(0.95, progress), message=f"Processed {sheet_name}")
 
+            job_repository.update_job(job_id, progress=0.96, message="Preparing export")
             export_path = Path(job.temp_dir) / "processed_full.xlsx"
             write_processed_workbook(processed_sheets, export_path)
             summary = self._summary(rows, ai_rows)
@@ -402,14 +421,39 @@ class ReportProcessor:
                     dictionaries.append(loaded)
         return dictionaries
 
-    def _load_corrections(self, files) -> dict[str, AIInterpretation]:
+    def _load_corrections(
+        self,
+        files,
+        *,
+        job_id: str | None = None,
+        progress_start: float = 0.08,
+        progress_end: float = 0.35,
+    ) -> dict[str, AIInterpretation]:
         corrections: dict[str, AIInterpretation] = {}
+        correction_files = [item for item in files if item.inspection.kind == FileKind.CORRECTIONS]
+        total_rows = sum(max(getattr(item.inspection, "row_count", 0), 0) for item in correction_files) or 1
+        seen_rows = 0
+
+        def interpret_with_progress(row: dict[str, str]) -> AIInterpretation:
+            nonlocal seen_rows
+            seen_rows += 1
+            if job_id and (seen_rows == 1 or seen_rows % 3 == 0):
+                progress = progress_start + (progress_end - progress_start) * min(seen_rows / total_rows, 1)
+                job_repository.update_job(
+                    job_id,
+                    progress=min(progress_end, progress),
+                    message=f"Interpreting corrections ({min(seen_rows, total_rows)}/{total_rows})",
+                )
+            return self._interpret_correction_row(row)
+
         for item in files:
             if item.inspection.kind == FileKind.CORRECTIONS:
-                parsed = parse_corrections(Path(item.path), interpret=self._interpret_correction_row)
+                parsed = parse_corrections(Path(item.path), interpret=interpret_with_progress)
                 for sin, interpretation in parsed.items():
                     if _should_replace_correction(corrections.get(sin), interpretation):
                         corrections[sin] = interpretation
+        if job_id:
+            job_repository.update_job(job_id, progress=progress_end, message="Correction files interpreted")
         return corrections
 
     def _summary(self, rows: list[RowDetail], ai_rows: int) -> JobSummary:
