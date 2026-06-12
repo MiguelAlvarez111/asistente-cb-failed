@@ -181,3 +181,134 @@ def test_load_corrections_uses_ai_for_free_text_correct_npi_cbcode(tmp_path, mon
     assert result.action == AIAction.CHANGE_TICKET
     assert result.target_npi == "1255593950"
     assert result.target_cbcode == "DN6835"
+
+
+def test_load_corrections_uses_ai_for_weird_free_text_in_operational_fields(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "weird_text.xlsx"
+    rows = [
+        {
+            "Type": "Surgeon",
+            "Last - Title": "FREIBERG",
+            "First": "STEPHEN L",
+            "NPI": "make change to SHAH",
+            "CBcode": "el right NPI es 1609175306",
+            "Comments": "",
+            "Source": "",
+            "SIN": "SIN-weird-npi-cbcode",
+        },
+        {
+            "Type": "Surgeon",
+            "Last - Title": "FREIBERG",
+            "First": "STEPHEN L",
+            "NPI": "change surgeon to SHAH",
+            "CBcode": "",
+            "Comments": "correct npi should be 1609175306",
+            "Source": "",
+            "SIN": "SIN-weird-npi-comments",
+        },
+        {
+            "Type": "Surgeon",
+            "Last - Title": "FREIBERG",
+            "First": "STEPHEN L",
+            "NPI": "",
+            "CBcode": "no tenemos cb code aun",
+            "Comments": "right NPI 1609175306 for SHAH",
+            "Source": "",
+            "SIN": "SIN-weird-cbcode-comments",
+        },
+        {
+            "Type": "Surgeon",
+            "Last - Title": "FREIBERG",
+            "First": "STEPHEN L",
+            "NPI": "",
+            "CBcode": "",
+            "Comments": "",
+            "Source": "USAP said use NPI 1609175306, CB pending",
+            "SIN": "SIN-weird-source",
+        },
+        {
+            "Type": "Surgeon",
+            "Last - Title": "FREIBERG",
+            "First": "STEPHEN L",
+            "NPI": "",
+            "CBcode": "",
+            "Comments": "please change ticket to SHAH, npi is 1609175306, cb not created yet",
+            "Source": "",
+            "SIN": "SIN-weird-comments",
+        },
+    ]
+    for row in rows:
+        row.update(
+            {
+                "patientLast": "Secret",
+                "patientFirst": "Person",
+                "DOB": "1950-01-01",
+                "AccNumber": "A1",
+            }
+        )
+    pd.DataFrame(rows).to_excel(path, index=False)
+    settings = Settings()
+    settings.ai_enabled = True
+    settings.openai_api_key = "test"
+    processor = ReportProcessor(settings)
+    captured_payloads: list[dict[str, str]] = []
+
+    def fake_interpret(payload):
+        captured_payloads.append(payload)
+        return (
+            _interpretation(
+                AIAction.CHANGE_TICKET,
+                AIReasonCode.CORRECT_PROVIDER_NPI,
+                provider_name="SHAH",
+                npi="1609175306",
+            ),
+            "test-model",
+            30,
+        )
+
+    monkeypatch.setattr(processor.ai, "interpret", fake_interpret)
+
+    corrections = processor._load_corrections([_correction_file(str(path))])
+
+    assert set(corrections) == {str(row["SIN"]) for row in rows}
+    assert processor._ai_usage_rows == len(rows)
+    assert processor._ai_usage_tokens == 30 * len(rows)
+    assert len(captured_payloads) == len(rows)
+    for payload in captured_payloads:
+        assert "sin" not in payload
+        assert "patientLast" not in payload
+        assert "patientFirst" not in payload
+        assert "DOB" not in payload
+        assert "AccNumber" not in payload
+    for result in corrections.values():
+        assert result.action == AIAction.CHANGE_TICKET
+        assert result.target_provider_name == "SHAH"
+        assert result.target_npi == "1609175306"
+
+
+def test_ai_disabled_free_text_fallback_does_not_invent_direct_cbcode(tmp_path) -> None:
+    path = tmp_path / "ai_disabled.xlsx"
+    pd.DataFrame(
+        [
+            {
+                "Type": "Surgeon",
+                "Last - Title": "FREIBERG",
+                "First": "STEPHEN L",
+                "NPI": "make change to SHAH",
+                "CBcode": "el right NPI es 1609175306",
+                "Comments": "",
+                "Source": "",
+                "SIN": "SIN-ai-disabled",
+            }
+        ]
+    ).to_excel(path, index=False)
+    settings = Settings()
+    settings.ai_enabled = False
+    processor = ReportProcessor(settings)
+
+    corrections = processor._load_corrections([_correction_file(str(path))])
+
+    result = corrections["SIN-ai-disabled"]
+    assert result.action == AIAction.UNKNOWN
+    assert result.reason_code == AIReasonCode.NO_SIGNAL
+    assert result.target_cbcode is None

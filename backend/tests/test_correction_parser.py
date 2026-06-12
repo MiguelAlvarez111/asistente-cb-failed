@@ -66,6 +66,28 @@ def test_chg_to_with_pending_cbcode_text_extracts_target_npi() -> None:
     assert result.is_pending_usap is True
 
 
+def test_direct_cbcode_accepts_compact_operational_code() -> None:
+    result = interpret_row({"npi": "", "cbcode": "FK40", "comments": ""})
+
+    assert result.action == AIAction.COMPLETE_INFO
+    assert result.reason_code == AIReasonCode.DIRECT_CBCODE
+    assert result.target_cbcode == "FK40"
+
+
+def test_free_text_cbcode_is_not_treated_as_direct_cbcode() -> None:
+    result = interpret_row(
+        {
+            "npi": "make change to SHAH",
+            "cbcode": "el right NPI es 1609175306",
+            "comments": "",
+        }
+    )
+
+    assert result.action != AIAction.COMPLETE_INFO
+    assert result.reason_code != AIReasonCode.DIRECT_CBCODE
+    assert result.target_cbcode is None
+
+
 def test_remove_from_ticket_parsing() -> None:
     result = interpret_row({"npi": "", "cbcode": "", "comments": "Remove from the ticket"})
     assert result.action == AIAction.REMOVE_FROM_TICKET

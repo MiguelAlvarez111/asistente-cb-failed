@@ -191,8 +191,9 @@ def interpret_row(row: dict[str, str]) -> AIInterpretation:
     if "awaiting" in lower:
         return _make(AIAction.AWAITING_USAP, AIReasonCode.AWAITING_USAP, pending=True, confidence=1, explanation="Awaiting USAP confirmation.")
 
-    if cbcode_field:
-        return _make(AIAction.COMPLETE_INFO, AIReasonCode.DIRECT_CBCODE, cbcode=cbcode_field, confidence=0.9, explanation="Direct CBCode value present.")
+    target_cbcode = _target_cbcode(cbcode_field)
+    if target_cbcode:
+        return _make(AIAction.COMPLETE_INFO, AIReasonCode.DIRECT_CBCODE, cbcode=target_cbcode, confidence=0.9, explanation="Direct CBCode value present.")
     if npi_field and npi_field.isdigit():
         return _make(AIAction.COMPLETE_INFO, AIReasonCode.DIRECT_NPI, npi=npi_field, confidence=0.85, explanation="Direct NPI value present.")
     if _row_role(row) == "provider" and _provider_name_from_row(row):

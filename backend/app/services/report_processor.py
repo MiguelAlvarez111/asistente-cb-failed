@@ -1,6 +1,7 @@
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
+import re
 from time import perf_counter
 
 import pandas as pd
@@ -47,6 +48,10 @@ CONCRETE_CORRECTION_ACTIONS = {
     AIAction.ADD_TO_GE,
     AIAction.REMOVE_FROM_TICKET,
 }
+COMPACT_OPERATIONAL_VALUE_RE = re.compile(r"^[A-Za-z0-9_-]{2,16}$")
+NPI_RE = re.compile(r"\b\d{10}\b")
+TEXT_WORD_RE = re.compile(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+")
+KNOWN_SOURCE_VALUES = {"", "dictionary", "usap", "npi registry", "usap / npi registry"}
 
 
 def _is_concrete_correction(interpretation: AIInterpretation) -> bool:
@@ -79,7 +84,43 @@ def _correction_haystack(row: dict[str, str]) -> str:
     ).lower()
 
 
+def _looks_like_free_text(value: str) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if NPI_RE.search(text) and not re.fullmatch(r"\d{10}", text):
+        return True
+    if "\n" in text or "\t" in text:
+        return True
+    words = TEXT_WORD_RE.findall(text)
+    if len(words) >= 3:
+        return True
+    return len(text) > 24 and not COMPACT_OPERATIONAL_VALUE_RE.fullmatch(text)
+
+
+def _has_suspicious_operational_text(row: dict[str, str]) -> bool:
+    npi = str(row.get("npi", "") or "").strip()
+    cbcode = str(row.get("cbcode", "") or "").strip()
+    comments = str(row.get("comments", "") or "").strip()
+    source = str(row.get("source", "") or "").strip()
+
+    if npi and not re.fullmatch(r"\d{10}(?:\s+\d{10})*", npi) and not re.match(r"^\s*chg\s+to\b", npi, re.IGNORECASE):
+        if _looks_like_free_text(npi):
+            return True
+    if cbcode and not COMPACT_OPERATIONAL_VALUE_RE.fullmatch(cbcode) and _looks_like_free_text(cbcode):
+        return True
+    if comments and _looks_like_free_text(comments):
+        return True
+    if source and source.lower() not in KNOWN_SOURCE_VALUES and _looks_like_free_text(source):
+        return True
+    return False
+
+
 def _should_ai_review_correction(row: dict[str, str], deterministic: AIInterpretation) -> bool:
+    if deterministic.action == AIAction.REMOVE_FROM_TICKET:
+        return False
+    if _has_suspicious_operational_text(row):
+        return True
     if deterministic.confidence < 0.7:
         return True
     haystack = _correction_haystack(row)
