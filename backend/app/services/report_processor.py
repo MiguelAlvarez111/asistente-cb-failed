@@ -10,7 +10,7 @@ from backend.app.core.config import Settings, get_settings
 from backend.app.repositories.audit_repository import audit_repository
 from backend.app.repositories.feedback_repository import feedback_repository
 from backend.app.repositories.job_repository import JobRecord, job_repository
-from backend.app.schemas.ai import AIAction, AIInterpretation
+from backend.app.schemas.ai import AIAction, AIInterpretation, AIReasonCode
 from backend.app.schemas.files import FileKind
 from backend.app.schemas.jobs import JobStatus, JobSummary
 from backend.app.schemas.results import RowDetail
@@ -42,39 +42,74 @@ def _apply_output(row: dict[str, str], result: RowDetail) -> dict[str, str]:
     return output
 
 
-CONCRETE_CORRECTION_ACTIONS = {
-    AIAction.CHANGE_TICKET,
-    AIAction.COMPLETE_INFO,
-    AIAction.ADD_TO_GE,
-    AIAction.REMOVE_FROM_TICKET,
-}
 COMPACT_OPERATIONAL_VALUE_RE = re.compile(r"^[A-Za-z0-9_-]{2,16}$")
 NPI_RE = re.compile(r"\b\d{10}\b")
 TEXT_WORD_RE = re.compile(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+")
 KNOWN_SOURCE_VALUES = {"", "dictionary", "usap", "npi registry", "usap / npi registry"}
 
 
+def _correction_priority(interpretation: AIInterpretation | None) -> int:
+    if interpretation is None:
+        return -1
+    if interpretation.action == AIAction.CHANGE_TICKET:
+        return 3 if (interpretation.target_provider_name or interpretation.target_npi or interpretation.target_cbcode) else 0
+    if interpretation.action == AIAction.COMPLETE_INFO:
+        return 2 if (interpretation.target_npi or interpretation.target_cbcode) else 0
+    if interpretation.action in {AIAction.ADD_TO_GE, AIAction.REMOVE_FROM_TICKET}:
+        return 1
+    return 0
+
+
 def _is_concrete_correction(interpretation: AIInterpretation) -> bool:
-    return (
-        interpretation.action in CONCRETE_CORRECTION_ACTIONS
-        or bool(interpretation.target_provider_name)
-        or bool(interpretation.target_npi)
-        or bool(interpretation.target_cbcode)
-    )
+    return _correction_priority(interpretation) >= 2
 
 
 def _should_replace_correction(existing: AIInterpretation | None, incoming: AIInterpretation) -> bool:
     if existing is None:
         return True
 
-    existing_concrete = _is_concrete_correction(existing)
-    incoming_concrete = _is_concrete_correction(incoming)
+    existing_priority = _correction_priority(existing)
+    incoming_priority = _correction_priority(incoming)
 
-    if incoming_concrete and not existing_concrete:
+    if incoming_priority > existing_priority:
         return True
-    if existing_concrete and not incoming_concrete:
+    if incoming_priority < existing_priority:
         return False
     return True
+
+
+def _merge_interpretation_targets(primary: AIInterpretation, fallback: AIInterpretation) -> AIInterpretation:
+    updates: dict[str, object] = {}
+    if not primary.target_provider_name and fallback.target_provider_name:
+        updates["target_provider_name"] = fallback.target_provider_name
+    if not primary.target_npi and fallback.target_npi:
+        updates["target_npi"] = fallback.target_npi
+    if not primary.target_cbcode and fallback.target_cbcode:
+        updates["target_cbcode"] = fallback.target_cbcode
+    if fallback.is_pending_usap and not primary.is_pending_usap:
+        updates["is_pending_usap"] = True
+    if fallback.requires_add_to_ge and primary.action == AIAction.ADD_TO_GE:
+        updates["requires_add_to_ge"] = True
+    return primary.model_copy(update=updates) if updates else primary
+
+
+def _select_interpretation(deterministic: AIInterpretation, ai_interpretation: AIInterpretation, settings: Settings) -> AIInterpretation:
+    if ai_interpretation.action == AIAction.MANUAL_REVIEW and not _is_concrete_correction(ai_interpretation):
+        return deterministic
+    if ai_interpretation.confidence < settings.ai_confidence_fallback_threshold:
+        return deterministic
+
+    deterministic_priority = _correction_priority(deterministic)
+    ai_priority = _correction_priority(ai_interpretation)
+    if ai_priority > deterministic_priority:
+        return _merge_interpretation_targets(ai_interpretation, deterministic)
+    if ai_priority < deterministic_priority:
+        return deterministic
+    if deterministic.confidence < 0.7 and ai_interpretation.confidence > deterministic.confidence:
+        return _merge_interpretation_targets(ai_interpretation, deterministic)
+    if ai_priority > 0 and ai_interpretation.confidence >= deterministic.confidence:
+        return _merge_interpretation_targets(ai_interpretation, deterministic)
+    return deterministic
 
 
 def _correction_haystack(row: dict[str, str]) -> str:
@@ -114,6 +149,32 @@ def _has_suspicious_operational_text(row: dict[str, str]) -> bool:
     if source and source.lower() not in KNOWN_SOURCE_VALUES and _looks_like_free_text(source):
         return True
     return False
+
+
+def _has_change_intent(row: dict[str, str]) -> bool:
+    haystack = _correction_haystack(row)
+    return bool(
+        re.search(r"\b(chg|change|correct|replace|switch)\b", haystack)
+        and re.search(r"\b(to|ticket|provider|surgeon|npi|cb)\b", haystack)
+    )
+
+
+def _promote_free_text_change(row: dict[str, str], interpretation: AIInterpretation) -> AIInterpretation:
+    if (
+        interpretation.action == AIAction.COMPLETE_INFO
+        and _has_change_intent(row)
+        and (interpretation.target_npi or interpretation.target_cbcode or interpretation.target_provider_name)
+    ):
+        reason = AIReasonCode.CORRECT_PROVIDER_NPI if interpretation.target_npi else AIReasonCode.CORRECT_PROVIDER_CB
+        return interpretation.model_copy(
+            update={
+                "action": AIAction.CHANGE_TICKET,
+                "reason_code": reason,
+                "is_pending_usap": bool(interpretation.target_npi and not interpretation.target_cbcode),
+                "explanation": f"{interpretation.explanation} Interpreted as change-ticket correction from free-text change intent.",
+            }
+        )
+    return interpretation
 
 
 def _should_ai_review_correction(row: dict[str, str], deterministic: AIInterpretation) -> bool:
@@ -174,20 +235,9 @@ class ReportProcessor:
             return deterministic
 
         ai_interpretation, model_used, tokens = ai.interpret(build_ai_payload(row))
+        ai_interpretation = _promote_free_text_change(row, ai_interpretation)
         self._record_ai_usage(model_used, tokens)
-        if ai_interpretation.action == AIAction.MANUAL_REVIEW and not _is_concrete_correction(ai_interpretation):
-            return deterministic
-        if ai_interpretation.confidence < settings.ai_confidence_fallback_threshold:
-            return deterministic
-        if _is_concrete_correction(ai_interpretation) and (
-            not _is_concrete_correction(deterministic)
-            or deterministic.action in {AIAction.AWAITING_USAP, AIAction.ADD_TO_GE, AIAction.UNKNOWN}
-            or ai_interpretation.confidence >= deterministic.confidence
-        ):
-            return ai_interpretation
-        if deterministic.confidence < 0.7 and ai_interpretation.confidence > deterministic.confidence:
-            return ai_interpretation
-        return deterministic
+        return _select_interpretation(deterministic, ai_interpretation, settings)
 
     def process(self, job_id: str, upload_id: str) -> None:
         started = perf_counter()

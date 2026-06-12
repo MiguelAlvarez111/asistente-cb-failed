@@ -80,6 +80,46 @@ def test_load_corrections_replaces_generic_awaiting_with_later_concrete(monkeypa
     assert result.target_cbcode == "DN6835"
 
 
+def test_load_corrections_keeps_complete_info_over_awaiting_with_ai_extracted_target(monkeypatch) -> None:
+    complete = _interpretation(AIAction.COMPLETE_INFO, AIReasonCode.DIRECT_CBCODE, cbcode="TX25093")
+    awaiting_with_target = _interpretation(
+        AIAction.AWAITING_USAP,
+        AIReasonCode.AWAITING_USAP,
+        provider_name="JOSEPH SEUNGHYUN LIM",
+        npi="1740817303",
+    )
+
+    def fake_parse(path: Path, **_) -> dict[str, AIInterpretation]:
+        return {"EX-de6d8a70-d2e0-41d5-839e-2999fdc08589": complete if path.name == "dfw.xlsx" else awaiting_with_target}
+
+    monkeypatch.setattr("backend.app.services.report_processor.parse_corrections", fake_parse)
+    processor = ReportProcessor.__new__(ReportProcessor)
+
+    corrections = processor._load_corrections([_correction_file("dfw.xlsx"), _correction_file("fl.xlsx")])
+
+    result = corrections["EX-de6d8a70-d2e0-41d5-839e-2999fdc08589"]
+    assert result.action == AIAction.COMPLETE_INFO
+    assert result.target_cbcode == "TX25093"
+
+
+def test_load_corrections_add_to_ge_does_not_replace_more_specific_correction(monkeypatch) -> None:
+    change_ticket = _interpretation(AIAction.CHANGE_TICKET, AIReasonCode.CHG_TO, provider_name="JONES", cbcode="FK40")
+    add_to_ge = _interpretation(AIAction.ADD_TO_GE, AIReasonCode.ADD_TO_GE, npi="1689712655")
+
+    def fake_parse(path: Path, **_) -> dict[str, AIInterpretation]:
+        return {"JQ-ticket": change_ticket if path.name == "first.xlsx" else add_to_ge}
+
+    monkeypatch.setattr("backend.app.services.report_processor.parse_corrections", fake_parse)
+    processor = ReportProcessor.__new__(ReportProcessor)
+
+    corrections = processor._load_corrections([_correction_file("first.xlsx"), _correction_file("second.xlsx")])
+
+    result = corrections["JQ-ticket"]
+    assert result.action == AIAction.CHANGE_TICKET
+    assert result.target_provider_name == "JONES"
+    assert result.target_cbcode == "FK40"
+
+
 def test_load_corrections_uses_ai_for_generic_awaiting_with_free_text(tmp_path, monkeypatch) -> None:
     path = tmp_path / "corrections.xlsx"
     pd.DataFrame(
@@ -181,6 +221,137 @@ def test_load_corrections_uses_ai_for_free_text_correct_npi_cbcode(tmp_path, mon
     assert result.action == AIAction.CHANGE_TICKET
     assert result.target_npi == "1255593950"
     assert result.target_cbcode == "DN6835"
+
+
+def test_ai_action_preserves_deterministic_cbcode_target(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "preserve_cbcode.xlsx"
+    pd.DataFrame(
+        [
+            {
+                "Type": "Surgeon",
+                "Last - Title": "CHOU",
+                "First": "JEFF DANIEL",
+                "NPI": "1154360857",
+                "CBcode": "TX25094",
+                "Comments": "Correct name per license is DONOHOE MD,AMANDA CARLSON",
+                "Source": "",
+                "SIN": "SIN-preserve-cbcode",
+            }
+        ]
+    ).to_excel(path, index=False)
+    settings = Settings()
+    settings.ai_enabled = True
+    settings.openai_api_key = "test"
+    processor = ReportProcessor(settings)
+
+    def fake_interpret(payload):
+        assert payload["cbcode_field"] == "TX25094"
+        return (
+            _interpretation(
+                AIAction.CHANGE_TICKET,
+                AIReasonCode.CORRECT_PROVIDER_CB,
+                provider_name="DONOHOE MD,AMANDA CARLSON",
+            ),
+            "test-model",
+            25,
+        )
+
+    monkeypatch.setattr(processor.ai, "interpret", fake_interpret)
+
+    corrections = processor._load_corrections([_correction_file(str(path))])
+
+    result = corrections["SIN-preserve-cbcode"]
+    assert result.action == AIAction.CHANGE_TICKET
+    assert result.target_provider_name == "DONOHOE MD,AMANDA CARLSON"
+    assert result.target_cbcode == "TX25094"
+
+
+def test_ai_action_preserves_deterministic_npi_target(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "preserve_npi.xlsx"
+    pd.DataFrame(
+        [
+            {
+                "Type": "Surgeon",
+                "Last - Title": "FREIBERG",
+                "First": "STEPHEN L",
+                "NPI": "1609175306",
+                "CBcode": "",
+                "Comments": "please change ticket to SHAH, cb not created yet",
+                "Source": "",
+                "SIN": "SIN-preserve-npi",
+            }
+        ]
+    ).to_excel(path, index=False)
+    settings = Settings()
+    settings.ai_enabled = True
+    settings.openai_api_key = "test"
+    processor = ReportProcessor(settings)
+
+    def fake_interpret(payload):
+        assert payload["npi_field"] == "1609175306"
+        return (
+            _interpretation(
+                AIAction.CHANGE_TICKET,
+                AIReasonCode.CORRECT_PROVIDER_NPI,
+                provider_name="SHAH",
+            ),
+            "test-model",
+            25,
+        )
+
+    monkeypatch.setattr(processor.ai, "interpret", fake_interpret)
+
+    corrections = processor._load_corrections([_correction_file(str(path))])
+
+    result = corrections["SIN-preserve-npi"]
+    assert result.action == AIAction.CHANGE_TICKET
+    assert result.target_provider_name == "SHAH"
+    assert result.target_npi == "1609175306"
+
+
+def test_ai_direct_npi_with_free_text_change_intent_becomes_change_ticket(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "free_text_change_npi.xlsx"
+    pd.DataFrame(
+        [
+            {
+                "Type": "Surgeon",
+                "Last - Title": "FREIBERG",
+                "First": "STEPHEN L",
+                "NPI": "make change to SHAH",
+                "CBcode": "el right NPI es 1609175306",
+                "Comments": "",
+                "Source": "",
+                "SIN": "SIN-free-text-change",
+            }
+        ]
+    ).to_excel(path, index=False)
+    settings = Settings()
+    settings.ai_enabled = True
+    settings.openai_api_key = "test"
+    processor = ReportProcessor(settings)
+
+    def fake_interpret(payload):
+        assert payload["npi_field"] == "make change to SHAH"
+        assert payload["cbcode_field"] == "el right NPI es 1609175306"
+        return (
+            _interpretation(
+                AIAction.COMPLETE_INFO,
+                AIReasonCode.DIRECT_NPI,
+                npi="1609175306",
+            ),
+            "test-model",
+            25,
+        )
+
+    monkeypatch.setattr(processor.ai, "interpret", fake_interpret)
+
+    corrections = processor._load_corrections([_correction_file(str(path))])
+
+    result = corrections["SIN-free-text-change"]
+    assert result.action == AIAction.CHANGE_TICKET
+    assert result.reason_code == AIReasonCode.CORRECT_PROVIDER_NPI
+    assert result.target_npi == "1609175306"
+    assert result.is_pending_usap is True
 
 
 def test_load_corrections_uses_ai_for_weird_free_text_in_operational_fields(tmp_path, monkeypatch) -> None:
