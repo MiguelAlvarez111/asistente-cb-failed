@@ -174,6 +174,73 @@ def _has_change_intent(row: dict[str, str]) -> bool:
     )
 
 
+def _has_explicit_change_intent(row: dict[str, str]) -> bool:
+    haystack = _correction_haystack(row)
+    patterns = [
+        r"\bchg\s+to\b",
+        r"\bmake\s+change\s+to\b",
+        r"\bchange\s+(?:in\s+the\s+ticket|ticket|to)\b",
+        r"\bcorrect\s+(?:provider|surgeon|npi)\b",
+        r"\breplace\s+(?:provider|surgeon)?\b",
+        r"\bswitch\s+(?:provider|surgeon)?\b",
+    ]
+    return any(re.search(pattern, haystack) for pattern in patterns)
+
+
+def _has_add_to_ge(row: dict[str, str]) -> bool:
+    return bool(re.search(r"\badd\s+to\s+ge\b", _correction_haystack(row)))
+
+
+def _clean_target_cbcode(value: str | None) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if NPI_RE.search(text):
+        return None
+    if not COMPACT_OPERATIONAL_VALUE_RE.fullmatch(text):
+        return None
+    return text
+
+
+def _normalize_interpretation_targets(row: dict[str, str], interpretation: AIInterpretation) -> AIInterpretation:
+    updates: dict[str, object] = {}
+    cbcode_text = str(interpretation.target_cbcode or "").strip()
+    npi_from_cbcode = NPI_RE.findall(cbcode_text)
+    explicit_change = _has_explicit_change_intent(row)
+
+    if npi_from_cbcode:
+        if not interpretation.target_npi:
+            updates["target_npi"] = npi_from_cbcode[-1]
+        updates["target_cbcode"] = None
+    elif interpretation.target_cbcode:
+        cleaned_cbcode = _clean_target_cbcode(interpretation.target_cbcode)
+        if cleaned_cbcode != interpretation.target_cbcode:
+            updates["target_cbcode"] = cleaned_cbcode
+
+    target_npi = str(updates.get("target_npi") or interpretation.target_npi or "").strip()
+    target_cbcode = updates.get("target_cbcode", interpretation.target_cbcode)
+
+    if interpretation.action == AIAction.CHANGE_TICKET and target_npi and not target_cbcode:
+        if explicit_change:
+            updates["is_pending_usap"] = True
+            updates["requires_add_to_ge"] = False
+        elif _has_add_to_ge(row):
+            updates.update(
+                {
+                    "action": AIAction.ADD_TO_GE,
+                    "reason_code": AIReasonCode.ADD_TO_GE_NPI,
+                    "target_provider_name": None,
+                    "requires_add_to_ge": True,
+                    "is_pending_usap": False,
+                    "explanation": (
+                        f"{interpretation.explanation} Interpreted as ADD TO GE because no explicit change-ticket intent was found."
+                    ),
+                }
+            )
+
+    return interpretation.model_copy(update=updates) if updates else interpretation
+
+
 def _promote_free_text_change(row: dict[str, str], interpretation: AIInterpretation) -> AIInterpretation:
     if (
         interpretation.action == AIAction.COMPLETE_INFO
@@ -239,7 +306,7 @@ class ReportProcessor:
             self._ai_usage_models = models
 
     def _interpret_correction_row(self, row: dict[str, str]) -> AIInterpretation:
-        deterministic = interpret_row(row)
+        deterministic = _normalize_interpretation_targets(row, interpret_row(row))
         settings = getattr(self, "settings", None)
         ai = getattr(self, "ai", None)
         if not settings or not ai or not settings.ai_enabled:
@@ -251,8 +318,9 @@ class ReportProcessor:
 
         ai_interpretation, model_used, tokens = ai.interpret(build_ai_payload(row))
         ai_interpretation = _promote_free_text_change(row, ai_interpretation)
+        ai_interpretation = _normalize_interpretation_targets(row, ai_interpretation)
         self._record_ai_usage(model_used, tokens)
-        return _select_interpretation(deterministic, ai_interpretation, settings)
+        return _normalize_interpretation_targets(row, _select_interpretation(deterministic, ai_interpretation, settings))
 
     def process(self, job_id: str, upload_id: str) -> None:
         started = perf_counter()
@@ -295,6 +363,7 @@ class ReportProcessor:
                         deterministic = corrections.get(sin) if sin else None
                         if deterministic is None:
                             deterministic = interpret_row(row_dict)
+                        deterministic = _normalize_interpretation_targets(row_dict, deterministic)
 
                         selected: AIInterpretation = deterministic
                         ai_interpretation = deterministic
@@ -308,9 +377,12 @@ class ReportProcessor:
                             token_estimate += tokens
                             if model_used:
                                 models_used.add(model_used)
+                            ai_interpretation = _promote_free_text_change(row_dict, ai_interpretation)
+                            ai_interpretation = _normalize_interpretation_targets(row_dict, ai_interpretation)
                             selected = ai_interpretation if ai_interpretation.confidence >= deterministic.confidence else deterministic
                             if ai_interpretation.confidence < self.settings.ai_confidence_auto_accept_threshold:
                                 selected.needs_manual_review = True
+                            selected = _normalize_interpretation_targets(row_dict, selected)
 
                         validation = validate_interpretation(selected, dictionary_index, row_dict)
                         final_action, recommendation, needs_review = choose_final_action(selected, validation)

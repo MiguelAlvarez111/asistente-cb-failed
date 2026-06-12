@@ -58,6 +58,9 @@ class AIInterpreter:
                                 "Rules and dictionaries run before and after you. "
                                 "Use only the sanitized fields provided. "
                                 "Do not invent NPI, CBCode, provider names, sources, or recommended values. "
+                                "A pure 10-digit number is an NPI candidate, not a CBCode. "
+                                "ADD TO GE by itself means the provider/NPI needs GE or USAP setup; do not turn it into CHANGE_TICKET unless the same row explicitly says to change, correct, replace, or switch the ticket/provider. "
+                                "If a change-ticket row has a 10-digit NPI but no real CBCode, return the NPI and set target_cbcode to null. "
                                 "Only extract values explicitly present in the text; downstream validation decides final recommendations. "
                                 "Return strict JSON only."
                             ),

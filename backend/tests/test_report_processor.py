@@ -6,7 +6,7 @@ import pandas as pd
 from backend.app.core.config import Settings
 from backend.app.schemas.ai import AIAction, AIInterpretation, AIReasonCode
 from backend.app.schemas.files import FileKind
-from backend.app.services.report_processor import ReportProcessor
+from backend.app.services.report_processor import ReportProcessor, _normalize_interpretation_targets
 
 
 def _interpretation(
@@ -16,6 +16,7 @@ def _interpretation(
     provider_name: str | None = None,
     npi: str | None = None,
     cbcode: str | None = None,
+    pending: bool = False,
 ) -> AIInterpretation:
     return AIInterpretation(
         action=action,
@@ -24,7 +25,7 @@ def _interpretation(
         target_npi=npi,
         target_cbcode=cbcode,
         requires_add_to_ge=action == AIAction.ADD_TO_GE,
-        is_pending_usap=action == AIAction.AWAITING_USAP,
+        is_pending_usap=pending or action == AIAction.AWAITING_USAP,
         confidence=1,
         needs_manual_review=False,
         explanation=reason_code.value,
@@ -307,6 +308,99 @@ def test_ai_action_preserves_deterministic_npi_target(tmp_path, monkeypatch) -> 
     assert result.action == AIAction.CHANGE_TICKET
     assert result.target_provider_name == "SHAH"
     assert result.target_npi == "1609175306"
+
+
+def test_target_normalization_moves_10_digit_cbcode_to_npi_for_change_intent() -> None:
+    row = {
+        "npi": "CHG TO MAKIA",
+        "cbcode": "ADD TO GE 1629271002",
+        "comments": "",
+        "source": "",
+    }
+    interpretation = _interpretation(
+        AIAction.CHANGE_TICKET,
+        AIReasonCode.CHG_TO,
+        provider_name="MAKIA",
+        cbcode="1629271002",
+    )
+
+    result = _normalize_interpretation_targets(row, interpretation)
+
+    assert result.action == AIAction.CHANGE_TICKET
+    assert result.target_provider_name == "MAKIA"
+    assert result.target_npi == "1629271002"
+    assert result.target_cbcode is None
+    assert result.requires_add_to_ge is False
+    assert result.is_pending_usap is True
+
+
+def test_target_normalization_keeps_pure_add_to_ge_as_awaiting_setup() -> None:
+    row = {
+        "npi": "1376777342",
+        "cbcode": "ADD TO GE",
+        "comments": "",
+        "source": "",
+    }
+    interpretation = _interpretation(
+        AIAction.CHANGE_TICKET,
+        AIReasonCode.CHG_TO,
+        npi="1376777342",
+        pending=True,
+    )
+
+    result = _normalize_interpretation_targets(row, interpretation)
+
+    assert result.action == AIAction.ADD_TO_GE
+    assert result.reason_code == AIReasonCode.ADD_TO_GE_NPI
+    assert result.target_npi == "1376777342"
+    assert result.target_cbcode is None
+    assert result.requires_add_to_ge is True
+    assert result.is_pending_usap is False
+
+
+def test_ai_bad_target_cbcode_npi_is_normalized_before_correction_merge(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "add_to_ge_npi.xlsx"
+    pd.DataFrame(
+        [
+            {
+                "Type": "Surgeon",
+                "Last - Title": "JOSEPH",
+                "First": "DANIA",
+                "NPI": "CHG TO MAKIA",
+                "CBcode": "ADD TO GE 1629271002",
+                "Comments": "",
+                "Source": "",
+                "SIN": "SIN-add-to-ge-npi",
+            }
+        ]
+    ).to_excel(path, index=False)
+    settings = Settings()
+    settings.ai_enabled = True
+    settings.openai_api_key = "test"
+    processor = ReportProcessor(settings)
+
+    def fake_interpret(payload):
+        return (
+            _interpretation(
+                AIAction.CHANGE_TICKET,
+                AIReasonCode.CHG_TO,
+                provider_name="MAKIA",
+                cbcode="1629271002",
+            ),
+            "test-model",
+            25,
+        )
+
+    monkeypatch.setattr(processor.ai, "interpret", fake_interpret)
+
+    corrections = processor._load_corrections([_correction_file(str(path))])
+
+    result = corrections["SIN-add-to-ge-npi"]
+    assert result.action == AIAction.CHANGE_TICKET
+    assert result.target_provider_name == "MAKIA"
+    assert result.target_npi == "1629271002"
+    assert result.target_cbcode is None
+    assert result.is_pending_usap is True
 
 
 def test_ai_direct_npi_with_free_text_change_intent_becomes_change_ticket(tmp_path, monkeypatch) -> None:
