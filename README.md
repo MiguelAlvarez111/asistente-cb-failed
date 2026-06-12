@@ -98,7 +98,7 @@ flowchart LR
 
 ## Pipeline Interno Del Backend
 
-El backend convierte archivos operativos en instrucciones concretas para el analista. La AI solo participa cuando una correccion en texto libre es ambigua y siempre recibe datos sanitizados.
+El backend convierte archivos operativos en instrucciones concretas para el analista. La AI solo participa cuando hay texto libre util o sospechoso; un `Awaiting for USAP's Confirmation` simple no consume AI. Los SINs repetidos son esperados y se resuelven por prioridad operacional.
 
 ```mermaid
 flowchart TD
@@ -120,18 +120,24 @@ flowchart TD
 
     D --> F["Correction Parser"]
     F --> G["Deterministic Interpreter"]
-    G --> H{"Interpretacion segura?"}
+    G --> H{"Campo operativo tiene texto libre util?"}
 
-    H -->|Si| J["Validator"]
-    H -->|No| I["Privacy Sanitizer"]
+    H -->|No: CBCode/NPI directo o Awaiting simple| J["Interpretacion deterministica"]
+    H -->|Si: comentario, NPI en frase, cambio ambiguo| I["Privacy Sanitizer"]
     I --> I1["Remueve patientLast, patientFirst, DOB, AccNumber, SIN"]
     I1 --> I2["AI Interpreter"]
     I2 --> I3["Pydantic valida JSON estricto"]
-    I3 --> J
+    I3 --> I4["Fusiona sin perder NPI/CBCode deterministico"]
+    I4 --> J
 
-    J --> K["Dictionary Lookup sensible a rol"]
-    K --> K1["Provider busca provider-style primero"]
-    K --> K2["Surgeon busca surgeon/referring-style primero"]
+    J --> J1["Merge por SIN duplicado"]
+    J1 --> J2["Prioridad: Change Ticket > Complete Info > ADD TO GE > Awaiting"]
+    J2 --> J3["Awaiting con NPI/nombre no pisa correccion concreta"]
+
+    J3 --> K["Validator"]
+    K --> K1["Dictionary Lookup sensible a rol"]
+    K1 --> K2["Provider busca provider-style primero"]
+    K1 --> K3["Surgeon busca surgeon/referring-style primero"]
     K --> L["NPI Registry solo valida identidad/nombre"]
 
     L --> M["Decision Engine"]
@@ -147,6 +153,21 @@ flowchart TD
 
     Q --> Q1["Numbers-ready limpio"]
     Q --> Q2["Full raw avanzado"]
+```
+
+## Progreso Del Job
+
+```mermaid
+flowchart LR
+    A["Queued"] --> B["Loading dictionaries"]
+    B --> C["Interpreting correction files"]
+    C --> C1{"Necesita AI?"}
+    C1 -->|No| C2["Regla deterministica rapida"]
+    C1 -->|Si| C3["AI con payload sanitizado"]
+    C2 --> D["Processing report sheets"]
+    C3 --> D
+    D --> E["Preparing export"]
+    E --> F["Completed"]
 ```
 
 ## Flujo Interno Del Frontend
@@ -199,25 +220,31 @@ flowchart TD
 flowchart TD
     A["Fila normalizada"] --> B{"Malformed row?"}
     B -->|Si| Z["MALFORMED_ROW"]
-    B -->|No| C{"Hay correccion concreta?"}
+    B -->|No| C{"Correccion por SIN repetido?"}
 
-    C -->|CHG TO / Change Ticket / AI validada| D["Validar target"]
-    C -->|ADD TO GE| E["AWAITING_USAP"]
-    C -->|Pending / Awaiting sin target| E
-    C -->|Campos faltantes sin correccion| F["Buscar por rol en diccionario"]
+    C -->|Si| C1["Aplicar prioridad operacional"]
+    C1 --> C2["Change Ticket > Complete Info > ADD TO GE > Awaiting"]
+    C -->|No| D["Usar interpretacion disponible"]
+    C2 --> D
 
-    D --> G{"Diccionario o NPI Registry valida?"}
-    G -->|Diccionario con CBCode| H["CHANGE_TICKET + Ready to Apply"]
-    G -->|NPI Registry valida pero CBCode pendiente| I["CHANGE_TICKET + Ready to Apply + CBCode Awaiting"]
-    G -->|No valida| J["MANUAL_REVIEW"]
+    D --> E{"Hay target de cambio?"}
+    E -->|Change Ticket / AI validada| F["Validar target"]
+    E -->|ADD TO GE| G["AWAITING_USAP"]
+    E -->|Pending / Awaiting sin target| G
+    E -->|Campos faltantes sin correccion| H["Buscar por rol en diccionario"]
 
-    F --> K{"Diccionario completa NPI/CBCode?"}
-    K -->|Si| L["COMPLETE_INFO + Ready to Apply"]
-    K -->|Solo NPI Registry| E
-    K -->|No| E
+    F --> I{"Diccionario o NPI Registry valida?"}
+    I -->|Diccionario con CBCode| J["CHANGE_TICKET + Ready to Apply"]
+    I -->|NPI Registry valida pero CBCode pendiente| K["CHANGE_TICKET + Ready to Apply + CBCode Awaiting"]
+    I -->|No valida| L["MANUAL_REVIEW"]
 
-    E --> M["Do Not Apply Yet / Enviar a USAP"]
-    J --> N["Do Not Apply Yet / Revisar manualmente"]
+    H --> M{"Diccionario completa NPI/CBCode?"}
+    M -->|Si| N["COMPLETE_INFO + Ready to Apply"]
+    M -->|Solo NPI Registry| G
+    M -->|No| G
+
+    G --> O["Do Not Apply Yet / Enviar a USAP"]
+    L --> P["Do Not Apply Yet / Revisar manualmente"]
 ```
 
 ## Flujo De Uso
@@ -277,7 +304,7 @@ AI es opcional y no reemplaza la validación.
 Reglas:
 
 - Primero corren reglas determinísticas y diccionarios.
-- AI solo se usa para comentarios ambiguos.
+- AI solo se usa para texto libre ambiguo o sospechoso en campos operativos.
 - AI no recibe PHI ni SIN.
 - AI no puede inventar `NPI`, `CBCode`, provider name ni valores finales.
 - Cualquier valor extraído por AI debe validarse antes de aparecer en `Recommended_*`.
