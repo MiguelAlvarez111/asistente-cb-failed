@@ -55,7 +55,7 @@ def test_remove_from_ticket_parsing() -> None:
     assert result.reason_code == AIReasonCode.REMOVE_FROM_TICKET
 
 
-def test_correct_provider_comment_wins_over_awaiting_cbcode() -> None:
+def test_correct_provider_free_text_defers_to_ai_review() -> None:
     result = interpret_row(
         {
             "npi": "1952805236",
@@ -64,13 +64,13 @@ def test_correct_provider_comment_wins_over_awaiting_cbcode() -> None:
         }
     )
 
-    assert result.action == AIAction.CHANGE_TICKET
-    assert result.reason_code == AIReasonCode.CORRECT_PROVIDER_CB
-    assert result.target_provider_name == "MANI MD,PREETHI"
-    assert result.target_cbcode == "TX22898"
+    assert result.action == AIAction.AWAITING_USAP
+    assert result.reason_code == AIReasonCode.AWAITING_USAP
+    assert result.target_provider_name is None
+    assert result.target_cbcode is None
 
 
-def test_correct_npi_with_cbcode_parsing() -> None:
+def test_correct_npi_with_cbcode_free_text_defers_to_ai_review() -> None:
     result = interpret_row(
         {
             "npi": "1801916341",
@@ -79,13 +79,13 @@ def test_correct_npi_with_cbcode_parsing() -> None:
         }
     )
 
-    assert result.action == AIAction.CHANGE_TICKET
-    assert result.reason_code == AIReasonCode.CORRECT_PROVIDER_NPI
-    assert result.target_npi == "1255593950"
-    assert result.target_cbcode == "DN6835"
+    assert result.action == AIAction.AWAITING_USAP
+    assert result.reason_code == AIReasonCode.AWAITING_USAP
+    assert result.target_npi is None
+    assert result.target_cbcode is None
 
 
-def test_correct_npi_with_implicit_cbcode_parsing() -> None:
+def test_correct_npi_with_implicit_cbcode_free_text_defers_to_ai_review() -> None:
     result = interpret_row(
         {
             "npi": "1801916341",
@@ -94,10 +94,10 @@ def test_correct_npi_with_implicit_cbcode_parsing() -> None:
         }
     )
 
-    assert result.action == AIAction.CHANGE_TICKET
-    assert result.reason_code == AIReasonCode.CORRECT_PROVIDER_NPI
-    assert result.target_npi == "1255593950"
-    assert result.target_cbcode == "DN6835"
+    assert result.action == AIAction.AWAITING_USAP
+    assert result.reason_code == AIReasonCode.AWAITING_USAP
+    assert result.target_npi is None
+    assert result.target_cbcode is None
 
 
 def test_pending_confirmation_stays_awaiting() -> None:
@@ -113,7 +113,7 @@ def test_pending_confirmation_stays_awaiting() -> None:
     assert result.reason_code == AIReasonCode.PENDING_USAP
 
 
-def test_pending_addition_with_provider_npi_extracts_concrete_target() -> None:
+def test_pending_addition_with_provider_npi_defers_to_ai_review() -> None:
     result = interpret_row(
         {
             "npi": "1174967541",
@@ -122,14 +122,13 @@ def test_pending_addition_with_provider_npi_extracts_concrete_target() -> None:
         }
     )
 
-    assert result.action == AIAction.CHANGE_TICKET
-    assert result.reason_code == AIReasonCode.CORRECT_PROVIDER_NPI
-    assert result.target_provider_name == "COLE MD,JUSTIN BRYON"
-    assert result.target_npi == "1073003075"
-    assert result.is_pending_usap is True
+    assert result.action == AIAction.AWAITING_USAP
+    assert result.reason_code == AIReasonCode.PENDING_USAP
+    assert result.target_provider_name is None
+    assert result.target_npi is None
 
 
-def test_correct_provider_with_npi_and_awaiting_cbcode_is_pending_target() -> None:
+def test_correct_provider_with_npi_free_text_defers_to_ai_review() -> None:
     result = interpret_row(
         {
             "npi": "1467778795",
@@ -138,15 +137,13 @@ def test_correct_provider_with_npi_and_awaiting_cbcode_is_pending_target() -> No
         }
     )
 
-    assert result.action == AIAction.CHANGE_TICKET
-    assert result.reason_code == AIReasonCode.CORRECT_PROVIDER_NPI
-    assert result.target_provider_name == "ELSBERND MD,BENJAMIN LAWRENCE"
-    assert result.target_npi == "1487073748"
-    assert result.target_cbcode is None
-    assert result.is_pending_usap is True
+    assert result.action == AIAction.AWAITING_USAP
+    assert result.reason_code == AIReasonCode.AWAITING_USAP
+    assert result.target_provider_name is None
+    assert result.target_npi is None
 
 
-def test_correct_provider_with_npi_without_name_extracts_npi_target() -> None:
+def test_correct_provider_with_npi_without_name_defers_to_ai_review() -> None:
     result = interpret_row(
         {
             "npi": "1467778795",
@@ -155,13 +152,12 @@ def test_correct_provider_with_npi_without_name_extracts_npi_target() -> None:
         }
     )
 
-    assert result.action == AIAction.CHANGE_TICKET
+    assert result.action == AIAction.AWAITING_USAP
     assert result.target_provider_name is None
-    assert result.target_npi == "1487073748"
-    assert result.is_pending_usap is True
+    assert result.target_npi is None
 
 
-def test_correct_provider_with_npi_and_cbcode_extracts_both_targets() -> None:
+def test_correct_provider_with_npi_and_cbcode_defers_to_ai_review() -> None:
     result = interpret_row(
         {
             "npi": "1104867365",
@@ -170,12 +166,11 @@ def test_correct_provider_with_npi_and_cbcode_extracts_both_targets() -> None:
         }
     )
 
-    assert result.action == AIAction.CHANGE_TICKET
-    assert result.reason_code == AIReasonCode.CORRECT_PROVIDER_NPI
-    assert result.target_provider_name == "GEORGE DPM,THOMAS"
-    assert result.target_npi == "1770169542"
-    assert result.target_cbcode == "TX23195"
-    assert result.is_pending_usap is False
+    assert result.action == AIAction.AWAITING_USAP
+    assert result.reason_code == AIReasonCode.AWAITING_USAP
+    assert result.target_provider_name is None
+    assert result.target_npi is None
+    assert result.target_cbcode is None
 
 
 def test_double_npi_usap_change_extracts_second_npi_as_pending_target() -> None:

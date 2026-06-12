@@ -1,5 +1,6 @@
 import pandas as pd
 
+from backend.app.schemas.ai import AIAction, AIInterpretation, AIReasonCode
 from backend.app.schemas.dictionaries import DictionaryType
 from backend.app.schemas.results import FinalAction, ValidationStatus
 from backend.app.services.correction_builder import AWAITING_USAP_CBCODE, CorrectionBuilder, _split_provider_name
@@ -33,12 +34,33 @@ def _provider_dictionary(rows: list[dict[str, str]]) -> DictionaryIndex:
     )
 
 
-def _run(row: dict[str, str], index: DictionaryIndex):
-    interpretation = interpret_row(row)
+def _run(row: dict[str, str], index: DictionaryIndex, interpretation: AIInterpretation | None = None):
+    interpretation = interpretation or interpret_row(row)
     validation = validate_interpretation(interpretation, index, row)
     final_action, recommendation, needs_review = choose_final_action(interpretation, validation)
     instruction = CorrectionBuilder().build(row, interpretation, validation, final_action, recommendation, needs_review)
     return instruction, validation
+
+
+def _change_ticket_interpretation(
+    *,
+    provider_name: str | None = None,
+    npi: str | None = None,
+    cbcode: str | None = None,
+    pending: bool = False,
+) -> AIInterpretation:
+    return AIInterpretation(
+        action=AIAction.CHANGE_TICKET,
+        reason_code=AIReasonCode.CORRECT_PROVIDER_NPI if npi else AIReasonCode.CORRECT_PROVIDER_CB,
+        target_provider_name=provider_name,
+        target_npi=npi,
+        target_cbcode=cbcode,
+        requires_add_to_ge=False,
+        is_pending_usap=pending,
+        confidence=0.98,
+        needs_manual_review=False,
+        explanation="AI extracted a change-ticket correction from free text.",
+    )
 
 
 def test_provider_name_split_keeps_suffix_in_last_title() -> None:
@@ -92,7 +114,7 @@ def test_correct_provider_with_cbcode_builds_change_ticket_instruction() -> None
         ]
     )
 
-    instruction, _ = _run(row, index)
+    instruction, _ = _run(row, index, _change_ticket_interpretation(provider_name="RAPHAELI MD,TAL", cbcode="H5290"))
 
     assert instruction.action == FinalAction.CHANGE_TICKET
     assert instruction.apply_this == "YES"
@@ -138,7 +160,7 @@ def test_surgeon_dictionary_match_uses_match_npi_for_registry_name_completion(mo
         ]
     )
 
-    instruction, validation = _run(row, index)
+    instruction, validation = _run(row, index, _change_ticket_interpretation(provider_name="MCCARTY III MD,THOMAS RAYMOND", cbcode="TX20541"))
 
     assert calls == ["1376955047"]
     assert validation.status == ValidationStatus.CBCODE_FOUND
@@ -306,7 +328,11 @@ def test_pending_usap_change_ticket_with_npi_but_no_cbcode_is_ready_to_apply(mon
         "source": "USAP",
     }
 
-    instruction, validation = _run(row, DictionaryIndex([]))
+    instruction, validation = _run(
+        row,
+        DictionaryIndex([]),
+        _change_ticket_interpretation(provider_name="COLE MD,JUSTIN BRYON", npi="1073003075", pending=True),
+    )
 
     assert validation.status == ValidationStatus.NPI_FOUND
     assert instruction.action == FinalAction.CHANGE_TICKET
@@ -348,7 +374,7 @@ def test_npi_registry_completes_name_when_comment_has_only_npi(monkeypatch) -> N
         "source": "",
     }
 
-    instruction, validation = _run(row, DictionaryIndex([]))
+    instruction, validation = _run(row, DictionaryIndex([]), _change_ticket_interpretation(npi="1487073748", pending=True))
 
     assert validation.status == ValidationStatus.NPI_FOUND
     assert instruction.action == FinalAction.CHANGE_TICKET
@@ -372,7 +398,7 @@ def test_change_ticket_npi_registry_failure_requires_manual_review(monkeypatch) 
         "source": "",
     }
 
-    instruction, validation = _run(row, DictionaryIndex([]))
+    instruction, validation = _run(row, DictionaryIndex([]), _change_ticket_interpretation(npi="1487073748", pending=True))
 
     assert validation.status == ValidationStatus.NPI_NOT_FOUND
     assert instruction.action == FinalAction.MANUAL_REVIEW

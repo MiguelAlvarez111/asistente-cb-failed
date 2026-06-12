@@ -136,3 +136,48 @@ def test_load_corrections_uses_ai_for_generic_awaiting_with_free_text(tmp_path, 
     assert "patientFirst" not in captured_payloads[0]
     assert "DOB" not in captured_payloads[0]
     assert "AccNumber" not in captured_payloads[0]
+
+
+def test_load_corrections_uses_ai_for_free_text_correct_npi_cbcode(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "colorado.xlsx"
+    pd.DataFrame(
+        [
+            {
+                "Type": "Surgeon",
+                "Last - Title": "ROWLEY",
+                "First": "MICHAEL WILLIAM",
+                "NPI": "1801916341",
+                "CBcode": "Awaiting for USAP’s Confirmation",
+                "Comments": "Correct NPI 1255593950 with DN6835. One you provided on this report is for an anesthesia MD in Florida.",
+                "Source": "USAP",
+                "SIN": "CR-colorado",
+            }
+        ]
+    ).to_excel(path, index=False)
+    settings = Settings()
+    settings.ai_enabled = True
+    settings.openai_api_key = "test"
+    processor = ReportProcessor(settings)
+
+    def fake_interpret(payload):
+        assert "sin" not in payload
+        assert payload["comments"].startswith("Correct NPI")
+        return (
+            _interpretation(
+                AIAction.CHANGE_TICKET,
+                AIReasonCode.CORRECT_PROVIDER_NPI,
+                npi="1255593950",
+                cbcode="DN6835",
+            ),
+            "test-model",
+            50,
+        )
+
+    monkeypatch.setattr(processor.ai, "interpret", fake_interpret)
+
+    corrections = processor._load_corrections([_correction_file(str(path))])
+
+    result = corrections["CR-colorado"]
+    assert result.action == AIAction.CHANGE_TICKET
+    assert result.target_npi == "1255593950"
+    assert result.target_cbcode == "DN6835"

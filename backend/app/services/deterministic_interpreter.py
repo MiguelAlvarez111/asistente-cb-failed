@@ -151,57 +151,6 @@ def interpret_row(row: dict[str, str]) -> AIInterpretation:
             explanation="ADD TO GE instruction detected.",
         )
 
-    cb_match = re.search(r"(?:correct|pending addition of correct)\s+provider\s+(?P<name>.*?)\s+with\s+cb\s*code\s+(?P<cb>[A-Za-z0-9_-]+)", comments, re.IGNORECASE)
-    if cb_match:
-        return _make(
-            AIAction.CHANGE_TICKET,
-            AIReasonCode.CORRECT_PROVIDER_CB,
-            provider_name=cb_match.group("name").strip(),
-            cbcode=cb_match.group("cb").strip(),
-            confidence=1,
-            explanation="Correct provider with CBCode instruction detected.",
-        )
-
-    npi_match = re.search(
-        r"(?:correct|pending addition of correct)\s+provider(?:\s+(?P<name>.*?))?\s+with\s+npi\s+(?P<npi>\d{10})(?:\s+(?:and\s+)?(?:with\s+)?cb\s*code\s+(?P<cb>[A-Za-z0-9_-]+))?",
-        comments,
-        re.IGNORECASE,
-    )
-    if npi_match:
-        is_pending_addition = npi_match.group(0).lower().startswith("pending addition")
-        target_cbcode = npi_match.group("cb").strip() if npi_match.group("cb") else None
-        is_pending_cbcode = not target_cbcode and (
-            is_pending_addition
-            or "awaiting" in cbcode_field.lower()
-            or "pending" in cbcode_field.lower()
-        )
-        provider_name = npi_match.group("name").strip() if npi_match.group("name") else None
-        return _make(
-            AIAction.CHANGE_TICKET,
-            AIReasonCode.CORRECT_PROVIDER_NPI,
-            provider_name=provider_name,
-            npi=npi_match.group("npi").strip(),
-            cbcode=target_cbcode,
-            pending=is_pending_cbcode,
-            confidence=1,
-            explanation="USAP correction with target NPI is awaiting CBCode." if is_pending_cbcode else "Correct provider with NPI instruction detected.",
-        )
-
-    correct_npi_cb_match = re.search(
-        r"correct\s+npi\s+(?P<npi>\d{10})\s+with\s+(?:cb\s*code\s+)?(?P<cb>[A-Za-z0-9_-]+)",
-        comments,
-        re.IGNORECASE,
-    )
-    if correct_npi_cb_match:
-        return _make(
-            AIAction.CHANGE_TICKET,
-            AIReasonCode.CORRECT_PROVIDER_NPI,
-            npi=correct_npi_cb_match.group("npi").strip(),
-            cbcode=correct_npi_cb_match.group("cb").strip(),
-            confidence=1,
-            explanation="Correct NPI with CBCode instruction detected.",
-        )
-
     if "change in the ticket" in lower:
         target_npi = npi_field if npi_field.isdigit() else None
         target_cbcode = _target_cbcode(cbcode_field)
