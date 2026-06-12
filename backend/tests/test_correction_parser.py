@@ -49,6 +49,23 @@ def test_chg_to_wins_over_add_to_ge_pending_npi() -> None:
     assert result.is_pending_usap is True
 
 
+def test_chg_to_with_pending_cbcode_text_extracts_target_npi() -> None:
+    result = interpret_row(
+        {
+            "npi": "CHG TO SHAH",
+            "cbcode": "NO TENEMOS CB CODE AUN. NPI CORRECTO 1609175306",
+            "comments": "",
+        }
+    )
+
+    assert result.action == AIAction.CHANGE_TICKET
+    assert result.reason_code == AIReasonCode.CHG_TO
+    assert result.target_provider_name == "SHAH"
+    assert result.target_npi == "1609175306"
+    assert result.target_cbcode is None
+    assert result.is_pending_usap is True
+
+
 def test_remove_from_ticket_parsing() -> None:
     result = interpret_row({"npi": "", "cbcode": "", "comments": "Remove from the ticket"})
     assert result.action == AIAction.REMOVE_FROM_TICKET

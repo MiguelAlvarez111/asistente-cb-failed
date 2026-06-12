@@ -5,14 +5,29 @@ from backend.app.schemas.ai import AIAction, AIInterpretation, AIReasonCode
 
 MALFORMED_RE = re.compile(r"^\s*line\s+\d+\s*:?\s*$", re.IGNORECASE)
 DEGREE_TOKENS = {"MD", "DO", "CRNA", "MDA", "DPM", "PA", "NP", "RN"}
+CB_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{2,16}$")
 
 
 def _target_cbcode(value: str) -> str | None:
     text = value.strip()
     lower = text.lower()
-    if not text or "awaiting" in lower or "pending" in lower or "add to ge" in lower:
+    if (
+        not text
+        or "awaiting" in lower
+        or "pending" in lower
+        or "add to ge" in lower
+        or "cb code" in lower
+        or re.search(r"\b\d{10}\b", text)
+        or not CB_CODE_RE.match(text)
+    ):
         return None
     return text
+
+
+def _target_npi_from_operational_text(*values: str) -> str | None:
+    text = " ".join(value for value in values if value).strip()
+    npi_values = re.findall(r"\b\d{10}\b", text)
+    return npi_values[-1] if npi_values else None
 
 
 def _row_role(row: dict[str, str]) -> str:
@@ -125,17 +140,24 @@ def interpret_row(row: dict[str, str]) -> AIInterpretation:
     chg_match = re.search(r"chg\s+to\s+(?P<name>.+)", npi_field, re.IGNORECASE) or re.search(r"chg\s+to\s+(?P<name>.+)", comments, re.IGNORECASE)
     if chg_match:
         add_to_ge_match = re.search(r"add\s+to\s+ge(?:\s+(?P<npi>\d{10}))?", haystack, re.IGNORECASE)
+        target_cbcode = _target_cbcode(cbcode_field)
+        target_npi = (
+            add_to_ge_match.group("npi")
+            if add_to_ge_match and add_to_ge_match.group("npi")
+            else _target_npi_from_operational_text(cbcode_field, comments, source)
+        )
+        is_pending_target = bool(add_to_ge_match or (target_npi and not target_cbcode))
         return _make(
             AIAction.CHANGE_TICKET,
             AIReasonCode.CHG_TO,
             provider_name=chg_match.group("name").strip(),
-            npi=add_to_ge_match.group("npi") if add_to_ge_match and add_to_ge_match.group("npi") else None,
-            cbcode=_target_cbcode(cbcode_field),
-            pending=bool(add_to_ge_match),
+            npi=target_npi,
+            cbcode=target_cbcode,
+            pending=is_pending_target,
             confidence=0.95,
             explanation=(
                 "CHG TO provider instruction detected; target NPI is awaiting GE/CBCode setup."
-                if add_to_ge_match
+                if is_pending_target
                 else "CHG TO provider instruction detected."
             ),
         )

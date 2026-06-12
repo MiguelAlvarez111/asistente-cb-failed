@@ -386,6 +386,42 @@ def test_npi_registry_completes_name_when_comment_has_only_npi(monkeypatch) -> N
     assert instruction.recommended_source == "USAP / NPI Registry"
 
 
+def test_chg_to_pending_cbcode_text_uses_registry_npi_target(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "backend.app.services.validator.get_npi_data",
+        lambda npi: {
+            "last_name": "SHAH",
+            "first_name": "ARPIT",
+            "middle_name": "",
+            "credential": "MD",
+            "full_name": "SHAH, ARPIT MD",
+            "npi": npi,
+        },
+    )
+    row = {
+        "type": "Surgeon",
+        "last_title": "FREIBERG",
+        "first": "STEPHEN L",
+        "npi": "CHG TO SHAH",
+        "cbcode": "NO TENEMOS CB CODE AUN. NPI CORRECTO 1609175306",
+        "comments": "",
+        "source": "",
+    }
+
+    instruction, validation = _run(row, DictionaryIndex([]))
+
+    assert validation.status == ValidationStatus.NPI_FOUND
+    assert instruction.action == FinalAction.CHANGE_TICKET
+    assert instruction.apply_this == "YES"
+    assert instruction.needs_manual_review is False
+    assert instruction.recommended_last_title == "SHAH"
+    assert instruction.recommended_first == "ARPIT"
+    assert instruction.recommended_npi == "1609175306"
+    assert instruction.recommended_cbcode == AWAITING_USAP_CBCODE
+    assert instruction.recommended_comments == "Change in the ticket"
+    assert instruction.recommended_source == "USAP / NPI Registry"
+
+
 def test_change_ticket_npi_registry_failure_requires_manual_review(monkeypatch) -> None:
     monkeypatch.setattr("backend.app.services.validator.get_npi_data", lambda npi: None)
     row = {
