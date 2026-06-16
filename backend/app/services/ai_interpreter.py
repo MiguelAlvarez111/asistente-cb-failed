@@ -60,6 +60,7 @@ class AIInterpreter:
                                 "Do not invent NPI, CBCode, provider names, sources, or recommended values. "
                                 "A pure 10-digit number is an NPI candidate, not a CBCode. "
                                 "ADD TO GE by itself means the provider/NPI needs GE or USAP setup; do not turn it into CHANGE_TICKET unless the same row explicitly says to change, correct, replace, or switch the ticket/provider. "
+                                "Phrases like 'pending addition of correct provider/surgeon NAME with NPI <10-digit NPI>' identify a corrected target provider; extract the target name and NPI as CHANGE_TICKET with pending USAP/CBCode, not as pure ADD_TO_GE. "
                                 "If a change-ticket row has a 10-digit NPI but no real CBCode, return the NPI and set target_cbcode to null. "
                                 "Only extract values explicitly present in the text; downstream validation decides final recommendations. "
                                 "Return strict JSON only."

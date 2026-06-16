@@ -6,7 +6,8 @@ import pandas as pd
 from backend.app.core.config import Settings
 from backend.app.schemas.ai import AIAction, AIInterpretation, AIReasonCode
 from backend.app.schemas.files import FileKind
-from backend.app.services.report_processor import ReportProcessor, _normalize_interpretation_targets
+from backend.app.services.correction_parser import ParsedCorrection
+from backend.app.services.report_processor import ReportProcessor, _normalize_interpretation_targets, _promote_direct_column_replacement
 
 
 def _interpretation(
@@ -36,6 +37,10 @@ def _correction_file(path: str):
     return SimpleNamespace(path=path, inspection=SimpleNamespace(kind=FileKind.CORRECTIONS))
 
 
+def _parsed(interpretation: AIInterpretation, row: dict[str, str] | None = None) -> ParsedCorrection:
+    return ParsedCorrection(interpretation=interpretation, row=row or {})
+
+
 def test_load_corrections_keeps_concrete_over_later_generic_awaiting(monkeypatch) -> None:
     concrete = _interpretation(
         AIAction.CHANGE_TICKET,
@@ -45,10 +50,10 @@ def test_load_corrections_keeps_concrete_over_later_generic_awaiting(monkeypatch
     )
     awaiting = _interpretation(AIAction.AWAITING_USAP, AIReasonCode.AWAITING_USAP)
 
-    def fake_parse(path: Path, **_) -> dict[str, AIInterpretation]:
-        return {"ME-ce26d01d-bd0b-48e3-8ba1-8a7f40164269": concrete if path.name == "first.xlsx" else awaiting}
+    def fake_parse(path: Path, **_) -> dict[str, ParsedCorrection]:
+        return {"ME-ce26d01d-bd0b-48e3-8ba1-8a7f40164269": _parsed(concrete if path.name == "first.xlsx" else awaiting)}
 
-    monkeypatch.setattr("backend.app.services.report_processor.parse_corrections", fake_parse)
+    monkeypatch.setattr("backend.app.services.report_processor.parse_correction_records", fake_parse)
     processor = ReportProcessor.__new__(ReportProcessor)
 
     corrections = processor._load_corrections([_correction_file("first.xlsx"), _correction_file("second.xlsx")])
@@ -67,10 +72,10 @@ def test_load_corrections_replaces_generic_awaiting_with_later_concrete(monkeypa
         cbcode="DN6835",
     )
 
-    def fake_parse(path: Path, **_) -> dict[str, AIInterpretation]:
-        return {"CR-708f6ea9-9e63-45eb-8cab-21b8f83e1fd4": awaiting if path.name == "first.xlsx" else concrete}
+    def fake_parse(path: Path, **_) -> dict[str, ParsedCorrection]:
+        return {"CR-708f6ea9-9e63-45eb-8cab-21b8f83e1fd4": _parsed(awaiting if path.name == "first.xlsx" else concrete)}
 
-    monkeypatch.setattr("backend.app.services.report_processor.parse_corrections", fake_parse)
+    monkeypatch.setattr("backend.app.services.report_processor.parse_correction_records", fake_parse)
     processor = ReportProcessor.__new__(ReportProcessor)
 
     corrections = processor._load_corrections([_correction_file("first.xlsx"), _correction_file("second.xlsx")])
@@ -90,10 +95,10 @@ def test_load_corrections_keeps_complete_info_over_awaiting_with_ai_extracted_ta
         npi="1740817303",
     )
 
-    def fake_parse(path: Path, **_) -> dict[str, AIInterpretation]:
-        return {"EX-de6d8a70-d2e0-41d5-839e-2999fdc08589": complete if path.name == "dfw.xlsx" else awaiting_with_target}
+    def fake_parse(path: Path, **_) -> dict[str, ParsedCorrection]:
+        return {"EX-de6d8a70-d2e0-41d5-839e-2999fdc08589": _parsed(complete if path.name == "dfw.xlsx" else awaiting_with_target)}
 
-    monkeypatch.setattr("backend.app.services.report_processor.parse_corrections", fake_parse)
+    monkeypatch.setattr("backend.app.services.report_processor.parse_correction_records", fake_parse)
     processor = ReportProcessor.__new__(ReportProcessor)
 
     corrections = processor._load_corrections([_correction_file("dfw.xlsx"), _correction_file("fl.xlsx")])
@@ -107,10 +112,10 @@ def test_load_corrections_add_to_ge_does_not_replace_more_specific_correction(mo
     change_ticket = _interpretation(AIAction.CHANGE_TICKET, AIReasonCode.CHG_TO, provider_name="JONES", cbcode="FK40")
     add_to_ge = _interpretation(AIAction.ADD_TO_GE, AIReasonCode.ADD_TO_GE, npi="1689712655")
 
-    def fake_parse(path: Path, **_) -> dict[str, AIInterpretation]:
-        return {"JQ-ticket": change_ticket if path.name == "first.xlsx" else add_to_ge}
+    def fake_parse(path: Path, **_) -> dict[str, ParsedCorrection]:
+        return {"JQ-ticket": _parsed(change_ticket if path.name == "first.xlsx" else add_to_ge)}
 
-    monkeypatch.setattr("backend.app.services.report_processor.parse_corrections", fake_parse)
+    monkeypatch.setattr("backend.app.services.report_processor.parse_correction_records", fake_parse)
     processor = ReportProcessor.__new__(ReportProcessor)
 
     corrections = processor._load_corrections([_correction_file("first.xlsx"), _correction_file("second.xlsx")])
@@ -356,6 +361,81 @@ def test_target_normalization_keeps_pure_add_to_ge_as_awaiting_setup() -> None:
     assert result.target_cbcode is None
     assert result.requires_add_to_ge is True
     assert result.is_pending_usap is False
+
+
+def test_target_normalization_turns_correct_provider_addition_into_pending_change_ticket() -> None:
+    row = {
+        "npi": "1497169239",
+        "cbcode": "Awaiting for USAP’s Confirmation",
+        "comments": "Pending addition of correct provider GUPTA MD,RAJESH KUMAR with NPI 1558674747",
+        "source": "",
+    }
+    interpretation = _interpretation(
+        AIAction.ADD_TO_GE,
+        AIReasonCode.PENDING_USAP,
+        provider_name="GUPTA MD,RAJESH KUMAR",
+        npi="1558674747",
+    )
+
+    result = _normalize_interpretation_targets(row, interpretation)
+
+    assert result.action == AIAction.CHANGE_TICKET
+    assert result.reason_code == AIReasonCode.CORRECT_PROVIDER_NPI
+    assert result.target_provider_name == "GUPTA MD,RAJESH KUMAR"
+    assert result.target_npi == "1558674747"
+    assert result.target_cbcode is None
+    assert result.requires_add_to_ge is False
+    assert result.is_pending_usap is True
+
+
+def test_direct_column_replacement_promotes_complete_info_to_change_ticket() -> None:
+    original_row = {
+        "type": "Surgeon",
+        "last_title": "RODNEY",
+        "first": "NATASHA A",
+        "npi": "1306105093",
+        "cbcode": "",
+    }
+    correction_row = {
+        "type": "Surgeon",
+        "last_title": "MAKIA",
+        "first": "ARETHA N",
+        "npi": "1629271002",
+        "cbcode": "MD9071",
+        "comments": "CORRECTING NAME IN GE",
+    }
+    interpretation = _interpretation(AIAction.COMPLETE_INFO, AIReasonCode.DIRECT_CBCODE, cbcode="MD9071")
+
+    result = _promote_direct_column_replacement(original_row, correction_row, interpretation)
+
+    assert result.action == AIAction.CHANGE_TICKET
+    assert result.reason_code == AIReasonCode.CHANGE_IN_TICKET
+    assert result.target_provider_name == "MAKIA ARETHA N"
+    assert result.target_npi == "1629271002"
+    assert result.target_cbcode == "MD9071"
+
+
+def test_direct_column_replacement_keeps_same_npi_as_complete_info() -> None:
+    original_row = {
+        "type": "Surgeon",
+        "last_title": "MURPHY",
+        "first": "HEATHER",
+        "npi": "1376777342",
+        "cbcode": "",
+    }
+    correction_row = {
+        "type": "Surgeon",
+        "last_title": "MURPHY",
+        "first": "HEATHER MARIE",
+        "npi": "1376777342",
+        "cbcode": "MD9072",
+    }
+    interpretation = _interpretation(AIAction.COMPLETE_INFO, AIReasonCode.DIRECT_CBCODE, cbcode="MD9072")
+
+    result = _promote_direct_column_replacement(original_row, correction_row, interpretation)
+
+    assert result.action == AIAction.COMPLETE_INFO
+    assert result.target_cbcode == "MD9072"
 
 
 def test_ai_bad_target_cbcode_npi_is_normalized_before_correction_merge(tmp_path, monkeypatch) -> None:

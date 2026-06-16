@@ -17,7 +17,7 @@ from backend.app.schemas.results import RowDetail
 from backend.app.services.ai_interpreter import AIInterpreter
 from backend.app.services.column_normalizer import normalize_dataframe
 from backend.app.services.correction_builder import CorrectionBuilder
-from backend.app.services.correction_parser import parse_corrections
+from backend.app.services.correction_parser import parse_correction_records
 from backend.app.services.decision_engine import choose_final_action
 from backend.app.services.deterministic_interpreter import interpret_row
 from backend.app.services.dictionary_loader import DictionaryIndex, LoadedDictionary, load_dictionary
@@ -46,6 +46,7 @@ COMPACT_OPERATIONAL_VALUE_RE = re.compile(r"^[A-Za-z0-9_-]{2,16}$")
 NPI_RE = re.compile(r"\b\d{10}\b")
 TEXT_WORD_RE = re.compile(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+")
 KNOWN_SOURCE_VALUES = {"", "dictionary", "usap", "npi registry", "usap / npi registry"}
+CORRECTION_CONTEXT_COLUMNS = {"type", "last_title", "first", "npi", "cbcode", "comments", "source", "practice", "facility", "dos"}
 
 
 def _correction_priority(interpretation: AIInterpretation | None) -> int:
@@ -91,6 +92,10 @@ def _merge_interpretation_targets(primary: AIInterpretation, fallback: AIInterpr
     if fallback.requires_add_to_ge and primary.action == AIAction.ADD_TO_GE:
         updates["requires_add_to_ge"] = True
     return primary.model_copy(update=updates) if updates else primary
+
+
+def _operational_correction_context(row: dict[str, str]) -> dict[str, str]:
+    return {key: str(row.get(key, "") or "").strip() for key in CORRECTION_CONTEXT_COLUMNS}
 
 
 def _select_interpretation(deterministic: AIInterpretation, ai_interpretation: AIInterpretation, settings: Settings) -> AIInterpretation:
@@ -220,7 +225,19 @@ def _normalize_interpretation_targets(row: dict[str, str], interpretation: AIInt
     target_npi = str(updates.get("target_npi") or interpretation.target_npi or "").strip()
     target_cbcode = updates.get("target_cbcode", interpretation.target_cbcode)
 
-    if interpretation.action == AIAction.CHANGE_TICKET and target_npi and not target_cbcode:
+    if interpretation.action == AIAction.ADD_TO_GE and (interpretation.target_provider_name or target_npi) and explicit_change:
+        updates.update(
+            {
+                "action": AIAction.CHANGE_TICKET,
+                "reason_code": AIReasonCode.CORRECT_PROVIDER_NPI if target_npi else AIReasonCode.CORRECT_PROVIDER_CB,
+                "requires_add_to_ge": False,
+                "is_pending_usap": bool(target_npi and not target_cbcode),
+                "explanation": (
+                    f"{interpretation.explanation} Interpreted as change-ticket target because the row identifies a correct provider/surgeon."
+                ),
+            }
+        )
+    elif interpretation.action == AIAction.CHANGE_TICKET and target_npi and not target_cbcode:
         if explicit_change:
             updates["is_pending_usap"] = True
             updates["requires_add_to_ge"] = False
@@ -239,6 +256,56 @@ def _normalize_interpretation_targets(row: dict[str, str], interpretation: AIInt
             )
 
     return interpretation.model_copy(update=updates) if updates else interpretation
+
+
+def _provider_name_from_correction_context(row: dict[str, str] | None) -> str | None:
+    if not row:
+        return None
+    last = str(row.get("last_title", "") or "").strip()
+    first = str(row.get("first", "") or "").strip()
+    if last and first:
+        return f"{last} {first}"
+    return last or first or None
+
+
+def _single_npi(value: str | None) -> str | None:
+    text = str(value or "").strip()
+    return text if re.fullmatch(r"\d{10}", text) else None
+
+
+def _direct_correction_changes_identity(original_row: dict[str, str], correction_row: dict[str, str] | None) -> bool:
+    if not correction_row:
+        return False
+    original_npi = _single_npi(str(original_row.get("npi", "") or ""))
+    correction_npi = _single_npi(str(correction_row.get("npi", "") or ""))
+    return bool(original_npi and correction_npi and original_npi != correction_npi)
+
+
+def _promote_direct_column_replacement(
+    original_row: dict[str, str],
+    correction_row: dict[str, str] | None,
+    interpretation: AIInterpretation,
+) -> AIInterpretation:
+    if interpretation.action != AIAction.COMPLETE_INFO:
+        return interpretation
+    if not _direct_correction_changes_identity(original_row, correction_row):
+        return interpretation
+
+    correction_npi = _single_npi(str((correction_row or {}).get("npi", "") or ""))
+    correction_cbcode = _clean_target_cbcode(str((correction_row or {}).get("cbcode", "") or ""))
+    updates = {
+        "action": AIAction.CHANGE_TICKET,
+        "reason_code": AIReasonCode.CHANGE_IN_TICKET,
+        "target_provider_name": _provider_name_from_correction_context(correction_row) or interpretation.target_provider_name,
+        "target_npi": correction_npi or interpretation.target_npi,
+        "target_cbcode": correction_cbcode or interpretation.target_cbcode,
+        "is_pending_usap": bool((correction_npi or interpretation.target_npi) and not (correction_cbcode or interpretation.target_cbcode)),
+        "requires_add_to_ge": False,
+        "explanation": (
+            f"{interpretation.explanation} Correction columns replace the original provider identity for the same SIN."
+        ),
+    }
+    return interpretation.model_copy(update=updates)
 
 
 def _promote_free_text_change(row: dict[str, str], interpretation: AIInterpretation) -> AIInterpretation:
@@ -296,6 +363,7 @@ class ReportProcessor:
         self._ai_usage_rows = 0
         self._ai_usage_tokens = 0
         self._ai_usage_models: set[str] = set()
+        self._correction_rows_by_sin: dict[str, dict[str, str]] = {}
 
     def _record_ai_usage(self, model_used: str | None, tokens: int) -> None:
         self._ai_usage_rows = getattr(self, "_ai_usage_rows", 0) + 1
@@ -363,6 +431,12 @@ class ReportProcessor:
                         deterministic = corrections.get(sin) if sin else None
                         if deterministic is None:
                             deterministic = interpret_row(row_dict)
+                        deterministic = _normalize_interpretation_targets(row_dict, deterministic)
+                        deterministic = _promote_direct_column_replacement(
+                            row_dict,
+                            getattr(self, "_correction_rows_by_sin", {}).get(sin),
+                            deterministic,
+                        )
                         deterministic = _normalize_interpretation_targets(row_dict, deterministic)
 
                         selected: AIInterpretation = deterministic
@@ -502,6 +576,7 @@ class ReportProcessor:
         progress_end: float = 0.35,
     ) -> dict[str, AIInterpretation]:
         corrections: dict[str, AIInterpretation] = {}
+        self._correction_rows_by_sin = {}
         correction_files = [item for item in files if item.inspection.kind == FileKind.CORRECTIONS]
         total_rows = sum(max(getattr(item.inspection, "row_count", 0), 0) for item in correction_files) or 1
         seen_rows = 0
@@ -520,10 +595,11 @@ class ReportProcessor:
 
         for item in files:
             if item.inspection.kind == FileKind.CORRECTIONS:
-                parsed = parse_corrections(Path(item.path), interpret=interpret_with_progress)
-                for sin, interpretation in parsed.items():
-                    if _should_replace_correction(corrections.get(sin), interpretation):
-                        corrections[sin] = interpretation
+                parsed = parse_correction_records(Path(item.path), interpret=interpret_with_progress)
+                for sin, record in parsed.items():
+                    if _should_replace_correction(corrections.get(sin), record.interpretation):
+                        corrections[sin] = record.interpretation
+                        self._correction_rows_by_sin[sin] = _operational_correction_context(record.row)
         if job_id:
             job_repository.update_job(job_id, progress=progress_end, message="Correction files interpreted")
         return corrections

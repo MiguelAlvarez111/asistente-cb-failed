@@ -1,4 +1,5 @@
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Callable
 
 import pandas as pd
@@ -6,6 +7,12 @@ import pandas as pd
 from backend.app.schemas.ai import AIInterpretation
 from backend.app.services.column_normalizer import normalize_dataframe
 from backend.app.services.deterministic_interpreter import interpret_row
+
+
+@dataclass
+class ParsedCorrection:
+    interpretation: AIInterpretation
+    row: dict[str, str]
 
 
 def _find_header_row(raw: pd.DataFrame) -> int | None:
@@ -16,12 +23,12 @@ def _find_header_row(raw: pd.DataFrame) -> int | None:
     return None
 
 
-def parse_corrections(
+def parse_correction_records(
     path: Path,
     *,
     interpret: Callable[[dict[str, str]], AIInterpretation] = interpret_row,
-) -> dict[str, AIInterpretation]:
-    corrections: dict[str, AIInterpretation] = {}
+) -> dict[str, ParsedCorrection]:
+    corrections: dict[str, ParsedCorrection] = {}
     xls = pd.ExcelFile(path)
     for sheet_name in xls.sheet_names:
         raw = pd.read_excel(xls, sheet_name=sheet_name, header=None, dtype=str).fillna("")
@@ -40,5 +47,16 @@ def parse_corrections(
                 continue
             interpretation = interpret(row_dict)
             if sin not in corrections or not interpretation.is_pending_usap:
-                corrections[sin] = interpretation
+                corrections[sin] = ParsedCorrection(interpretation=interpretation, row=row_dict)
     return corrections
+
+
+def parse_corrections(
+    path: Path,
+    *,
+    interpret: Callable[[dict[str, str]], AIInterpretation] = interpret_row,
+) -> dict[str, AIInterpretation]:
+    return {
+        sin: record.interpretation
+        for sin, record in parse_correction_records(path, interpret=interpret).items()
+    }
