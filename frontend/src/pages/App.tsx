@@ -1397,16 +1397,18 @@ function ReviewSheet({
         <button
           className={`rounded-full border px-3 py-1.5 text-sm transition ${!selectedRegion ? "border-pine bg-pine text-white" : "border-line hover:bg-field"}`}
           onClick={() => setSelectedRegion("")}
+          title={`${allRegionCount} matching rows`}
         >
-          All <span className="ml-1 text-xs opacity-75">{allRegionCount}</span>
+          All
         </button>
         {regions.map((region) => (
           <button
             key={region}
             className={`rounded-full border px-3 py-1.5 text-sm transition ${selectedRegion === region ? "border-pine bg-pine text-white" : "border-line hover:bg-field"}`}
             onClick={() => setSelectedRegion(region)}
+            title={`${regionCounts[region] ?? 0} matching rows in ${region}`}
           >
-            {region} <span className="ml-1 text-xs opacity-75">{regionCounts[region] ?? 0}</span>
+            {region}
           </button>
         ))}
       </div>
@@ -1416,8 +1418,9 @@ function ReviewSheet({
             key={filter.value}
             className={`rounded border px-2 py-2 text-sm ${reviewFilter === filter.value ? "border-pine bg-pine text-white" : "border-line hover:bg-field"}`}
             onClick={() => setReviewFilter(filter.value)}
+            title={`${filterCounts[filter.value] ?? 0} ${filter.label.toLowerCase()} rows`}
           >
-            {filter.label} <span className="ml-1 text-xs opacity-75">{filterCounts[filter.value] ?? 0}</span>
+            {filter.label}
           </button>
         ))}
       </div>
