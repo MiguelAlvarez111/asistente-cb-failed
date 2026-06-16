@@ -207,6 +207,14 @@ def _reason(row: RowDetail) -> str:
     return row.Manual_Reason or row.Correction_Summary or ""
 
 
+def _is_surgeon(row: RowDetail) -> bool:
+    return str(row.Current_Type or row.Recommended_Type or "").strip().lower() == "surgeon"
+
+
+def _is_provider(row: RowDetail) -> bool:
+    return str(row.Current_Type or row.Recommended_Type or "").strip().lower() == "provider"
+
+
 def _original_value(row: RowDetail, key: str) -> str:
     original = row.sanitized_original or {}
     return str(original.get(key, "") or "").strip()
@@ -244,6 +252,11 @@ def _final_delivery_row(row: RowDetail) -> dict[str, object]:
         first = _combined_plain(current_first, recommended_first)
         npi = _combined_plain(current_npi, recommended_npi)
         cbcode = _combined_plain(current_cbcode, recommended_cbcode)
+    elif _is_provider(row):
+        last_title = _recommended_or_current(current_last, recommended_last)
+        first = _recommended_or_current(current_first, recommended_first)
+        npi = _recommended_or_current(recommended_npi, current_npi)
+        cbcode = _recommended_or_current(recommended_cbcode, current_cbcode)
     else:
         last_title = _recommended_or_current(recommended_last, current_last)
         first = _recommended_or_current(recommended_first, current_first)
@@ -287,6 +300,29 @@ def _rich_red_value(value: str | None) -> CellRichText | str:
     if not text:
         return ""
     return CellRichText([TextBlock(InlineFont(color="FFFF0000"), text)])
+
+
+def _rich_green_value(value: str | None) -> CellRichText | str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return CellRichText([TextBlock(InlineFont(color="FF008000"), text)])
+
+
+def _rich_added_value(current: str | None, recommended: str | None) -> CellRichText | str:
+    current_text = str(current or "").strip()
+    recommended_text = str(recommended or "").strip()
+    if not recommended_text:
+        return current_text
+    if not current_text or len(recommended_text) <= len(current_text):
+        return recommended_text
+    if not recommended_text.upper().startswith(current_text.upper()):
+        return recommended_text
+    base = recommended_text[: len(current_text)]
+    added = recommended_text[len(current_text) :]
+    if not added.strip():
+        return recommended_text
+    return CellRichText([base, TextBlock(InlineFont(color="FF008000"), added)])
 
 
 def _clean_export_row(row: RowDetail, *, source_override: str | None = None) -> dict[str, object]:
@@ -440,6 +476,19 @@ def _style_final_delivery_sheet(writer: pd.ExcelWriter, sheet_name: str, df: pd.
                     continue
                 cell = worksheet.cell(row=row_number, column=columns[column_name])
                 cell.value = rich_value
+        elif source_row.Final_Action == "COMPLETE_INFO":
+            if _is_surgeon(source_row):
+                name_values = {
+                    "Last - Title": _rich_added_value(source_row.Current_Last_Title, source_row.Recommended_Last_Title),
+                    "First": _rich_added_value(source_row.Current_First, source_row.Recommended_First),
+                }
+                for column_name, rich_value in name_values.items():
+                    if column_name in columns:
+                        worksheet.cell(row=row_number, column=columns[column_name]).value = rich_value
+            if source_row.Cell_Color_NPI.lower() == "green" and "NPI" in columns:
+                worksheet.cell(row=row_number, column=columns["NPI"]).value = _rich_green_value(_recommended_or_current(source_row.Recommended_NPI, source_row.Current_NPI))
+            if source_row.Cell_Color_CBCode.lower() == "green" and "CBcode" in columns:
+                worksheet.cell(row=row_number, column=columns["CBcode"]).value = _rich_green_value(_recommended_or_current(source_row.Recommended_CBCode, source_row.Current_CBCode))
         elif source_row.Final_Action == "AWAITING_USAP" and "CBcode" in columns:
             worksheet.cell(row=row_number, column=columns["CBcode"]).fill = PatternFill(fill_type="solid", fgColor=FILL_COLORS["yellow"])
 

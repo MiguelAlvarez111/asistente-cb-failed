@@ -22,7 +22,22 @@ import type { FileKind, RowResult, SINLookupMatch, SINLookupResponse, UploadInsp
 
 type Section = "search" | "review" | "upload" | "export";
 type ReviewFilter = "READY" | "CHANGE_TICKET" | "COMPLETE_INFO" | "AWAITING_USAP" | "MANUAL_REVIEW" | "REMOVE_FROM_TICKET";
+type ReviewSortKey = "sin" | "type" | "action" | "name" | "npi" | "cbcode" | "comments" | "source";
+type SortDirection = "asc" | "desc";
+type ReviewColumnKey = ReviewSortKey | "details";
 type BadgeTone = "neutral" | "good" | "warn" | "danger";
+
+const REVIEW_COLUMNS: Array<{ key: ReviewColumnKey; label: string; width: number; sortable?: boolean }> = [
+  { key: "sin", label: "SIN", width: 230, sortable: true },
+  { key: "type", label: "Type", width: 82, sortable: true },
+  { key: "action", label: "Action", width: 128, sortable: true },
+  { key: "name", label: "Name", width: 360, sortable: true },
+  { key: "npi", label: "Recommended NPI", width: 128, sortable: true },
+  { key: "cbcode", label: "Recommended CBCode", width: 260, sortable: true },
+  { key: "comments", label: "Comments", width: 220, sortable: true },
+  { key: "source", label: "Source", width: 150, sortable: true },
+  { key: "details", label: "Details", width: 70 }
+];
 
 const REVIEW_FILTERS: Array<{ label: string; value: ReviewFilter }> = [
   { label: "Ready", value: "READY" },
@@ -87,6 +102,14 @@ function providerSummary(lastTitle: string, first: string) {
   return last || given || "No provider";
 }
 
+function isSurgeonRole(role?: string | null) {
+  return String(role || "").trim().toLowerCase() === "surgeon";
+}
+
+function isProviderRole(role?: string | null) {
+  return String(role || "").trim().toLowerCase() === "provider";
+}
+
 function roleLabel(role?: string | null) {
   const value = String(role || "").trim();
   if (!value) return "Provider";
@@ -103,13 +126,52 @@ function recommendedProvider(row: Pick<RowResult, "Recommended_Last_Title" | "Re
   return providerSummary(row.Recommended_Last_Title, row.Recommended_First);
 }
 
-function reviewNameTitle(row: RowResult) {
+function reviewNameValue(row: RowResult) {
   const current = providerSummary(row.Current_Last_Title, row.Current_First);
   const recommended = recommendedProvider(row);
+  if (row.Final_Action === "COMPLETE_INFO" && isProviderRole(row.Current_Type)) return current;
+  return recommended !== "No provider" ? recommended : current;
+}
+
+function reviewNameTitle(row: RowResult) {
+  const current = providerSummary(row.Current_Last_Title, row.Current_First);
+  const recommended = reviewNameValue(row);
   if (row.Final_Action === "CHANGE_TICKET" && recommended !== "No provider") {
     return `${current} -> ${recommended}`;
   }
-  return recommended !== "No provider" ? recommended : current;
+  return recommended;
+}
+
+function splitAddedText(current: string, recommended: string) {
+  const base = current.trim();
+  const full = recommended.trim();
+  if (!base || !full || full.length <= base.length) return { base: full, added: "" };
+  if (!full.toLocaleUpperCase().startsWith(base.toLocaleUpperCase())) return { base: full, added: "" };
+  const visibleBase = full.slice(0, base.length);
+  const added = full.slice(base.length);
+  return added.trim() ? { base: visibleBase, added } : { base: full, added: "" };
+}
+
+function EnrichedField({ current, recommended }: { current: string; recommended: string }) {
+  const segment = splitAddedText(current, recommended);
+  return (
+    <>
+      {segment.base}
+      {segment.added ? <span className="font-semibold text-emerald-700">{segment.added}</span> : null}
+    </>
+  );
+}
+
+function reviewSortValue(row: RowResult, key: ReviewSortKey) {
+  if (key === "sin") return normalizeSin(row.SIN);
+  if (key === "type") return roleLabel(row.Current_Type);
+  if (key === "action") return actionLabel(row.Final_Action, row.Quick_Action);
+  if (key === "name") return reviewNameTitle(row);
+  if (key === "npi") return row.Recommended_NPI;
+  if (key === "cbcode") return row.Recommended_CBCode;
+  if (key === "comments") return row.Recommended_Comments;
+  if (key === "source") return row.Recommended_Source;
+  return "";
 }
 
 function recommendedProviderFromMatch(match: SINLookupMatch) {
@@ -252,6 +314,37 @@ function ApplyBadge({ apply }: { apply: string }) {
   return <Badge tone={apply === "YES" ? "good" : "warn"}>{applyLabel(apply)}</Badge>;
 }
 
+function ReviewNameCell({ row }: { row: RowResult }) {
+  const current = providerSummary(row.Current_Last_Title, row.Current_First);
+  const recommended = reviewNameValue(row);
+
+  if (row.Final_Action === "CHANGE_TICKET" && recommended !== "No provider") {
+    return (
+      <div className="whitespace-normal break-words leading-4">
+        <span className="text-ink/55 line-through decoration-2">{current}</span>
+        <span className="mx-1 text-ink/35">→</span>
+        <span className="font-semibold text-red-600">{recommended}</span>
+      </div>
+    );
+  }
+
+  if (row.Final_Action === "COMPLETE_INFO" && isSurgeonRole(row.Current_Type) && recommended !== "No provider") {
+    return (
+      <div className="whitespace-normal break-words leading-4">
+        <EnrichedField current={row.Current_Last_Title} recommended={row.Recommended_Last_Title || row.Current_Last_Title} />
+        {row.Recommended_First || row.Current_First ? (
+          <>
+            {row.Recommended_Last_Title || row.Current_Last_Title ? ", " : null}
+            <EnrichedField current={row.Current_First} recommended={row.Recommended_First || row.Current_First} />
+          </>
+        ) : null}
+      </div>
+    );
+  }
+
+  return <div className="whitespace-normal break-words leading-4">{recommended}</div>;
+}
+
 export default function App() {
   const queryClient = useQueryClient();
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -266,6 +359,10 @@ export default function App() {
   const [sinInput, setSinInput] = useState("");
   const [lookupResult, setLookupResult] = useState<SINLookupResponse | null>(null);
   const [reviewRegion, setReviewRegion] = useState("");
+  const [reviewSort, setReviewSort] = useState<{ key: ReviewSortKey | null; direction: SortDirection }>({ key: null, direction: "asc" });
+  const [reviewColumnWidths, setReviewColumnWidths] = useState<Record<ReviewColumnKey, number>>(
+    () => Object.fromEntries(REVIEW_COLUMNS.map((column) => [column.key, column.width])) as Record<ReviewColumnKey, number>
+  );
   const [toast, setToast] = useState<string | null>(null);
 
   const sessionQuery = useQuery({ queryKey: ["session"], queryFn: session });
@@ -341,7 +438,7 @@ export default function App() {
   const reviewRows = useMemo(() => {
     const needle = reviewSearch.toLowerCase();
     const sinNeedle = normalizeSin(reviewSearch);
-    return sortedRows.filter((row) => {
+    const filtered = sortedRows.filter((row) => {
       const regionMatch = !selectedRegion || (row.Region || row.sheet_name) === selectedRegion;
       const filterMatch = reviewFilter === "READY" ? row.Apply_This === "YES" : row.Final_Action === reviewFilter;
       const searchText = [
@@ -359,7 +456,14 @@ export default function App() {
       const sinMatch = sinNeedle && normalizeSin(row.SIN).includes(sinNeedle);
       return regionMatch && filterMatch && (!needle || searchText.includes(needle) || sinMatch);
     });
-  }, [reviewFilter, reviewSearch, selectedRegion, sortedRows]);
+    if (!reviewSort.key) return filtered;
+    return [...filtered].sort((a, b) => {
+      const left = reviewSortValue(a, reviewSort.key!);
+      const right = reviewSortValue(b, reviewSort.key!);
+      const comparison = left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" });
+      return reviewSort.direction === "asc" ? comparison : -comparison;
+    });
+  }, [reviewFilter, reviewSearch, reviewSort, selectedRegion, sortedRows]);
   const progressState = uploadMutation.isPending
     ? { status: "INSPECTING", progress: 18, message: "Inspecting files..." }
     : jobMutation.isPending
@@ -525,6 +629,10 @@ export default function App() {
           setReviewFilter={setReviewFilter}
           reviewSearch={reviewSearch}
           setReviewSearch={setReviewSearch}
+          reviewSort={reviewSort}
+          setReviewSort={setReviewSort}
+          columnWidths={reviewColumnWidths}
+          setColumnWidths={setReviewColumnWidths}
           onOpenRow={setSelectedRow}
         />
       )}
@@ -929,6 +1037,10 @@ function ReviewSheet({
   setReviewFilter,
   reviewSearch,
   setReviewSearch,
+  reviewSort,
+  setReviewSort,
+  columnWidths,
+  setColumnWidths,
   onOpenRow
 }: {
   rows: RowResult[];
@@ -940,8 +1052,32 @@ function ReviewSheet({
   setReviewFilter: (filter: ReviewFilter) => void;
   reviewSearch: string;
   setReviewSearch: (value: string) => void;
+  reviewSort: { key: ReviewSortKey | null; direction: SortDirection };
+  setReviewSort: (sort: { key: ReviewSortKey | null; direction: SortDirection }) => void;
+  columnWidths: Record<ReviewColumnKey, number>;
+  setColumnWidths: React.Dispatch<React.SetStateAction<Record<ReviewColumnKey, number>>>;
   onOpenRow: (row: RowResult) => void;
 }) {
+  const toggleSort = (key: ReviewSortKey) => {
+    setReviewSort(reviewSort.key === key ? { key, direction: reviewSort.direction === "asc" ? "desc" : "asc" } : { key, direction: "asc" });
+  };
+  const startResize = (event: React.MouseEvent, key: ReviewColumnKey) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startWidth = columnWidths[key] ?? REVIEW_COLUMNS.find((column) => column.key === key)?.width ?? 120;
+    const onMove = (moveEvent: MouseEvent) => {
+      const nextWidth = Math.max(64, startWidth + moveEvent.clientX - startX);
+      setColumnWidths((current) => ({ ...current, [key]: nextWidth }));
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
   return (
     <section className="rounded border border-line bg-white p-4 shadow-sm">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -987,29 +1123,40 @@ function ReviewSheet({
         ))}
       </div>
       <div className="max-h-[640px] overflow-auto rounded border border-line">
-        <table className="min-w-[1520px] table-fixed text-left text-xs">
+        <table className="table-fixed text-left text-xs" style={{ minWidth: REVIEW_COLUMNS.reduce((sum, column) => sum + (columnWidths[column.key] ?? column.width), 0) }}>
           <colgroup>
-            <col style={{ width: 230 }} />
-            <col style={{ width: 82 }} />
-            <col style={{ width: 128 }} />
-            <col style={{ width: 360 }} />
-            <col style={{ width: 128 }} />
-            <col style={{ width: 260 }} />
-            <col style={{ width: 220 }} />
-            <col style={{ width: 150 }} />
-            <col style={{ width: 70 }} />
+            {REVIEW_COLUMNS.map((column) => (
+              <col key={column.key} style={{ width: columnWidths[column.key] ?? column.width }} />
+            ))}
           </colgroup>
           <thead className="sticky top-0 z-10 bg-field">
             <tr>
-              <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">SIN</th>
-              <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Type</th>
-              <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Action</th>
-              <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Name</th>
-              <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Recommended NPI</th>
-              <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Recommended CBCode</th>
-              <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Comments</th>
-              <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Source</th>
-              <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Details</th>
+              {REVIEW_COLUMNS.map((column) => (
+                <th
+                  key={column.key}
+                  className="relative border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55"
+                >
+                  {column.sortable ? (
+                    <button
+                      className="flex w-full items-center gap-1 text-left uppercase tracking-wide hover:text-ink focus:outline-none focus:ring-2 focus:ring-pine/20"
+                      onClick={() => toggleSort(column.key as ReviewSortKey)}
+                      type="button"
+                    >
+                      <span>{column.label}</span>
+                      <span className="text-[10px] text-ink/45">
+                        {reviewSort.key === column.key ? (reviewSort.direction === "asc" ? "▲" : "▼") : "↕"}
+                      </span>
+                    </button>
+                  ) : (
+                    <span>{column.label}</span>
+                  )}
+                  <span
+                    aria-hidden="true"
+                    className="absolute right-0 top-0 h-full w-1 cursor-col-resize border-r border-transparent hover:border-pine/50"
+                    onMouseDown={(event) => startResize(event, column.key)}
+                  />
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-line/80">
@@ -1024,17 +1171,7 @@ function ReviewSheet({
                 <td className="px-2 py-2 align-top whitespace-nowrap"><Badge>{roleLabel(row.Current_Type)}</Badge></td>
                 <td className="px-2 py-2 align-top whitespace-nowrap"><ActionBadge action={row.Final_Action} label={row.Quick_Action} /></td>
                 <td className="px-2 py-2 align-top" title={reviewNameTitle(row)}>
-                  {row.Final_Action === "CHANGE_TICKET" && recommendedProvider(row) !== "No provider" ? (
-                    <div className="whitespace-normal break-words leading-4">
-                      <span className="text-ink/55 line-through decoration-2">{providerSummary(row.Current_Last_Title, row.Current_First)}</span>
-                      <span className="mx-1 text-ink/35">→</span>
-                      <span className="font-semibold text-red-600">{recommendedProvider(row)}</span>
-                    </div>
-                  ) : (
-                    <div className="whitespace-normal break-words leading-4">
-                      {recommendedProvider(row) !== "No provider" ? recommendedProvider(row) : providerSummary(row.Current_Last_Title, row.Current_First)}
-                    </div>
-                  )}
+                  <ReviewNameCell row={row} />
                 </td>
                 <td className="px-2 py-2 align-top font-mono whitespace-nowrap"><span className="mr-2"><ColorDot color={row.Cell_Color_NPI} /></span>{row.Recommended_NPI}</td>
                 <td className="px-2 py-2 align-top font-mono whitespace-normal break-words"><span className="mr-2"><ColorDot color={row.Cell_Color_CBCode} /></span>{row.Recommended_CBCode}</td>

@@ -60,6 +60,7 @@ def _row(
     quick_action: str = "Complete fields",
     apply_this: str = "YES",
     source: str = "Dictionary",
+    role: str = "Provider",
     current_last: str = "DOE",
     current_first: str = "JANE",
     recommended_last: str = "SMITH",
@@ -107,8 +108,8 @@ def _row(
         Final_Recommendation="ok",
         Quick_Action=quick_action,
         Apply_This=apply_this,
-        Current_Type="Provider",
-        Recommended_Type="Provider",
+        Current_Type=role,
+        Recommended_Type=role,
         Current_Last_Title=current_last,
         Current_First=current_first,
         Current_NPI="1234567890",
@@ -176,8 +177,8 @@ def test_numbers_ready_export_is_clean_and_grouped_by_region() -> None:
     assert list(df.columns) == EXPECTED_FINAL_COLUMNS
     assert all(column not in df.columns for column in TECHNICAL_COLUMNS)
     assert df.loc[0, "Type"] == "Provider"
-    assert df.loc[0, "Last - Title"] == "SMITH"
-    assert df.loc[0, "First"] == "ALICE"
+    assert df.loc[0, "Last - Title"] == "DOE"
+    assert df.loc[0, "First"] == "JANE"
     assert str(df.loc[0, "NPI"]) == "1987654321"
     assert df.loc[0, "CBcode"] == "CB1"
     assert df.loc[0, "Practice"] == "MCD Shared"
@@ -238,8 +239,54 @@ def test_numbers_ready_complete_info_does_not_use_rich_strikethrough() -> None:
     headers = [cell.value for cell in worksheet[1]]
     columns = {header: index + 1 for index, header in enumerate(headers)}
     last_cell = worksheet.cell(row=2, column=columns["Last - Title"])
-    assert last_cell.value == "SMITH"
+    assert last_cell.value == "DOE"
     assert getattr(last_cell.value, "font", None) is None
+
+
+def test_numbers_ready_complete_info_surgeon_colors_added_name_green() -> None:
+    data = rows_to_workbook(
+        [
+            _row(
+                row_id="surgeon-complete",
+                role="Surgeon",
+                current_last="HARDY",
+                current_first="ELVIN",
+                recommended_last="HARDY",
+                recommended_first="ELVIN KENDELL",
+            )
+        ],
+        kind="numbers_ready",
+    )
+    workbook = load_workbook(BytesIO(data), rich_text=True)
+    worksheet = workbook["MARYLAND"]
+    headers = [cell.value for cell in worksheet[1]]
+    columns = {header: index + 1 for index, header in enumerate(headers)}
+    first_cell = worksheet.cell(row=2, column=columns["First"])
+    assert str(first_cell.value) == "ELVIN KENDELL"
+    assert first_cell.value[0] == "ELVIN"
+    assert first_cell.value[1].text == " KENDELL"
+    assert first_cell.value[1].font.color.rgb == "FF008000"
+    assert str(worksheet.cell(row=2, column=columns["CBcode"]).value) == "CB1"
+    assert worksheet.cell(row=2, column=columns["CBcode"]).value[0].font.color.rgb == "FF008000"
+
+
+def test_numbers_ready_complete_info_provider_keeps_system_name() -> None:
+    data = rows_to_workbook(
+        [
+            _row(
+                row_id="provider-complete",
+                role="Provider",
+                current_last="Guidry",
+                current_first="Xenequia Monique",
+                recommended_last="GUIDRY",
+                recommended_first="XENEQUIA MONIQUE",
+            )
+        ],
+        kind="numbers_ready",
+    )
+    df = pd.read_excel(BytesIO(data), sheet_name="MARYLAND")
+    assert df.loc[0, "Last - Title"] == "Guidry"
+    assert df.loc[0, "First"] == "Xenequia Monique"
 
 
 def test_full_export_download_does_not_delete_job_files(tmp_path) -> None:
