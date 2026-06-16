@@ -367,7 +367,6 @@ export default function App() {
     () => Object.fromEntries(REVIEW_COLUMNS.map((column) => [column.key, column.width])) as Record<ReviewColumnKey, number>
   );
   const [uploadProgress, setUploadProgress] = useState<UploadProgressState | null>(null);
-  const [processingHandoff, setProcessingHandoff] = useState(false);
   const [autoOpenedJobId, setAutoOpenedJobId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -403,7 +402,6 @@ export default function App() {
       setJobId(data.job_id);
       setLookupResult(null);
       setSelectedRow(null);
-      setProcessingHandoff(false);
       setAutoOpenedJobId(null);
       setActiveSection("upload");
       window.history.replaceState(null, "", `/?job=${data.job_id}`);
@@ -501,9 +499,7 @@ export default function App() {
         startedAt: uploadProgress?.startedAt,
         indeterminate: uploadProgress?.phase === "inspecting"
       }
-    : processingHandoff
-      ? { status: "COMPLETED", progress: 100, message: "Correction cockpit ready. Opening Search..." }
-      : jobMutation.isPending
+    : jobMutation.isPending
         ? { status: "QUEUED", progress: 5, message: "Preparing files..." }
         : jobQuery.data && (jobQuery.data.status !== "COMPLETED" || resultsQuery.isFetching)
           ? {
@@ -536,7 +532,6 @@ export default function App() {
     setReviewFilter("READY");
     setReviewSearch("");
     setReviewRegion("");
-    setProcessingHandoff(false);
     setAutoOpenedJobId(null);
     setToast(null);
     setActiveSection("upload");
@@ -578,14 +573,10 @@ export default function App() {
 
   useEffect(() => {
     if (!jobId || jobQuery.data?.status !== "COMPLETED" || !resultsQuery.data || autoOpenedJobId === jobId) return undefined;
-    setProcessingHandoff(true);
-    const timer = window.setTimeout(() => {
-      setProcessingHandoff(false);
-      setAutoOpenedJobId(jobId);
-      setActiveSection("search");
-      window.setTimeout(() => searchInputRef.current?.focus(), 100);
-    }, 900);
-    return () => window.clearTimeout(timer);
+    setAutoOpenedJobId(jobId);
+    setActiveSection("search");
+    window.setTimeout(() => searchInputRef.current?.focus(), 100);
+    return undefined;
   }, [autoOpenedJobId, jobId, jobQuery.data?.status, resultsQuery.data]);
 
   if (sessionQuery.isLoading) {
@@ -680,7 +671,6 @@ export default function App() {
           onGoUpload={() => setActiveSection("upload")}
           onGoReview={() => setActiveSection("review")}
           onClearSearch={clearSearch}
-          isLoadingResults={Boolean(jobId && jobQuery.data?.status === "COMPLETED" && resultsQuery.isFetching && rows.length === 0)}
         />
       )}
 
@@ -713,7 +703,6 @@ export default function App() {
           uploadPending={uploadMutation.isPending}
           processPending={jobMutation.isPending}
           isProcessing={isJobProcessing}
-          isCompleting={processingHandoff || Boolean(jobQuery.data?.status === "COMPLETED" && resultsQuery.isFetching)}
           onUploadFiles={(files) => uploadMutation.mutate(files)}
           onProcess={(uploadId) => jobMutation.mutate(uploadId)}
           onContinue={() => setActiveSection("search")}
@@ -762,8 +751,7 @@ function MainSearch({
   onCopy,
   onGoUpload,
   onGoReview,
-  onClearSearch,
-  isLoadingResults
+  onClearSearch
 }: {
   inputRef: React.RefObject<HTMLInputElement>;
   sinInput: string;
@@ -781,7 +769,6 @@ function MainSearch({
   onGoUpload: () => void;
   onGoReview: () => void;
   onClearSearch: () => void;
-  isLoadingResults: boolean;
 }) {
   const hasResult = Boolean(lookupResult);
   return (
@@ -836,9 +823,9 @@ function MainSearch({
         )}
       </div>
 
-      {(isSearching || isLoadingResults) && <SearchResultSkeleton />}
+      {isSearching && <SearchResultSkeleton />}
 
-      {!lookupResult && !isSearching && !isLoadingResults && (
+      {!lookupResult && !isSearching && (
         <>
           <SummaryCards summary={summary} jobStatus={jobStatus} />
           <div className="rounded border border-line bg-white p-4 text-center text-sm text-ink/65">
@@ -1022,64 +1009,6 @@ function ReviewSheetSkeleton() {
         ))}
       </div>
     </div>
-  );
-}
-
-function UploadInspectionSkeleton() {
-  return (
-    <div className="grid gap-3 lg:grid-cols-2">
-      {Array.from({ length: 4 }).map((_, index) => (
-        <div key={index} className="rounded border border-line bg-white p-3 shadow-sm">
-          <div className="mb-3 flex items-start justify-between gap-3">
-            <div className="flex min-w-0 gap-3">
-              <SkeletonBlock className="h-9 w-9 shrink-0" />
-              <div className="space-y-2">
-                <SkeletonBlock className="h-4 w-52" />
-                <SkeletonBlock className="h-3 w-32" />
-              </div>
-            </div>
-            <SkeletonBlock className="h-7 w-24 rounded-full" />
-          </div>
-          <SkeletonBlock className="h-4 w-36" />
-          <SkeletonBlock className="mt-3 h-10 w-full" />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ProcessingWorkspaceSkeleton({ completed = false }: { completed?: boolean }) {
-  return (
-    <section className="rounded border border-line bg-white p-5 shadow-sm">
-      <div className="mb-4 flex items-center justify-between gap-4">
-        <div>
-          <p className="text-sm font-semibold text-pine">{completed ? "Results are ready" : "Building correction cockpit"}</p>
-          <p className="text-sm text-ink/60">
-            {completed ? "Opening Search with the processed results..." : "Reading rows, validating dictionaries, and preparing the analyst view."}
-          </p>
-        </div>
-        <SkeletonBlock className="h-9 w-28 rounded-full" />
-      </div>
-      <div className="grid gap-3 md:grid-cols-3">
-        <div className="rounded border border-line p-3">
-          <SkeletonBlock className="h-3 w-24" />
-          <SkeletonBlock className="mt-3 h-8 w-16" />
-        </div>
-        <div className="rounded border border-line p-3">
-          <SkeletonBlock className="h-3 w-28" />
-          <SkeletonBlock className="mt-3 h-8 w-20" />
-        </div>
-        <div className="rounded border border-line p-3">
-          <SkeletonBlock className="h-3 w-24" />
-          <SkeletonBlock className="mt-3 h-8 w-24" />
-        </div>
-      </div>
-      <div className="mt-4 space-y-2">
-        {Array.from({ length: 5 }).map((_, index) => (
-          <SkeletonBlock key={index} className="h-9 w-full" />
-        ))}
-      </div>
-    </section>
   );
 }
 
@@ -1427,82 +1356,82 @@ function ReviewSheet({
       {isLoading ? (
         <ReviewSheetSkeleton />
       ) : (
-      <div className="max-h-[640px] overflow-auto rounded border border-line">
-        <table className="table-fixed text-left text-xs" style={{ minWidth: REVIEW_COLUMNS.reduce((sum, column) => sum + (columnWidths[column.key] ?? column.width), 0) }}>
-          <colgroup>
-            {REVIEW_COLUMNS.map((column) => (
-              <col key={column.key} style={{ width: columnWidths[column.key] ?? column.width }} />
-            ))}
-          </colgroup>
-          <thead className="sticky top-0 z-10 bg-white shadow-sm">
-            <tr>
+      <div className="rounded border border-line">
+        <div className="max-h-[640px] overflow-auto">
+          <table className="table-fixed text-left text-xs" style={{ minWidth: REVIEW_COLUMNS.reduce((sum, column) => sum + (columnWidths[column.key] ?? column.width), 0) }}>
+            <colgroup>
               {REVIEW_COLUMNS.map((column) => (
-                <th
-                  key={column.key}
-                  className="group relative border-b border-line bg-field px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/60"
-                >
-                  {column.sortable ? (
-                    <button
-                      className="flex w-full items-center gap-1 text-left uppercase tracking-wide transition hover:text-ink focus:outline-none focus:ring-2 focus:ring-pine/20"
-                      onClick={() => toggleSort(column.key as ReviewSortKey)}
-                      type="button"
-                    >
-                      <span>{column.label}</span>
-                      <span className={`text-[10px] ${reviewSort.key === column.key ? "text-pine" : "text-ink/35"}`}>
-                        {reviewSort.key === column.key ? (reviewSort.direction === "asc" ? "▲" : "▼") : "↕"}
-                      </span>
-                    </button>
-                  ) : (
-                    <span>{column.label}</span>
-                  )}
-                  <span
-                    aria-hidden="true"
-                    className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize border-r border-transparent bg-transparent transition group-hover:border-pine/60 group-hover:bg-pine/10"
-                    onMouseDown={(event) => startResize(event, column.key)}
-                  />
-                </th>
+                <col key={column.key} style={{ width: columnWidths[column.key] ?? column.width }} />
               ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line/80">
-            {rows.length === 0 && (
+            </colgroup>
+            <thead className="sticky top-0 z-10 bg-white shadow-sm">
               <tr>
-                <td className="px-4 py-8 text-center text-sm text-ink/60" colSpan={REVIEW_COLUMNS.length}>
-                  No {REVIEW_FILTERS.find((filter) => filter.value === reviewFilter)?.label.toLowerCase()} rows{selectedRegion ? ` in ${selectedRegion}` : ""}. Try All, another region, or a different filter.
-                </td>
-              </tr>
-            )}
-            {rows.map((row) => (
-              <tr
-                key={row.row_id}
-                className="odd:bg-white even:bg-field/35 hover:bg-pine/5"
-              >
-                <td className="px-2 py-2 align-top font-mono text-[11px] leading-4 text-ink/85" title={row.SIN}>
-                  <div className="whitespace-normal break-all">{row.SIN}</div>
-                </td>
-                <td className="px-2 py-2 align-top whitespace-nowrap"><Badge>{roleLabel(row.Current_Type)}</Badge></td>
-                <td className="px-2 py-2 align-top whitespace-nowrap"><ActionBadge action={row.Final_Action} label={row.Quick_Action} /></td>
-                <td className="px-2 py-2 align-top" title={reviewNameTitle(row)}>
-                  <ReviewNameCell row={row} />
-                </td>
-                <td className="px-2 py-2 align-top font-mono whitespace-nowrap"><span className="mr-2"><ColorDot color={row.Cell_Color_NPI} /></span>{row.Recommended_NPI}</td>
-                <td className="px-2 py-2 align-top font-mono whitespace-normal break-words"><span className="mr-2"><ColorDot color={row.Cell_Color_CBCode} /></span>{row.Recommended_CBCode}</td>
-                <td className="px-2 py-2 align-top whitespace-normal break-words" title={row.Recommended_Comments}>{row.Recommended_Comments}</td>
-                <td className="px-2 py-2 align-top whitespace-nowrap" title={row.Recommended_Source}>
-                  <span className="mr-2"><ColorDot color={row.Cell_Color_Source} /></span>{row.Recommended_Source}
-                </td>
-                <td className="px-2 py-2 align-top whitespace-nowrap">
-                  <button
-                    className="rounded border border-line px-2 py-1 text-[11px] font-semibold text-ink/70 hover:bg-field focus:outline-none focus:ring-2 focus:ring-pine/30"
-                    onClick={() => onOpenRow(row)}
+                {REVIEW_COLUMNS.map((column) => (
+                  <th
+                    key={column.key}
+                    className="group relative border-b border-line bg-field px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/60"
                   >
-                    Details
-                  </button>
-                </td>
+                    {column.sortable ? (
+                      <button
+                        className="flex w-full items-center gap-1 text-left uppercase tracking-wide transition hover:text-ink focus:outline-none focus:ring-2 focus:ring-pine/20"
+                        onClick={() => toggleSort(column.key as ReviewSortKey)}
+                        type="button"
+                      >
+                        <span>{column.label}</span>
+                        <span className={`text-[10px] ${reviewSort.key === column.key ? "text-pine" : "text-ink/35"}`}>
+                          {reviewSort.key === column.key ? (reviewSort.direction === "asc" ? "▲" : "▼") : "↕"}
+                        </span>
+                      </button>
+                    ) : (
+                      <span>{column.label}</span>
+                    )}
+                    <span
+                      aria-hidden="true"
+                      className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize border-r border-transparent bg-transparent transition group-hover:border-pine/60 group-hover:bg-pine/10"
+                      onMouseDown={(event) => startResize(event, column.key)}
+                    />
+                  </th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-line/80">
+              {rows.map((row) => (
+                <tr
+                  key={row.row_id}
+                  className="odd:bg-white even:bg-field/35 hover:bg-pine/5"
+                >
+                  <td className="px-2 py-2 align-top font-mono text-[11px] leading-4 text-ink/85" title={row.SIN}>
+                    <div className="whitespace-normal break-all">{row.SIN}</div>
+                  </td>
+                  <td className="px-2 py-2 align-top whitespace-nowrap"><Badge>{roleLabel(row.Current_Type)}</Badge></td>
+                  <td className="px-2 py-2 align-top whitespace-nowrap"><ActionBadge action={row.Final_Action} label={row.Quick_Action} /></td>
+                  <td className="px-2 py-2 align-top" title={reviewNameTitle(row)}>
+                    <ReviewNameCell row={row} />
+                  </td>
+                  <td className="px-2 py-2 align-top font-mono whitespace-nowrap"><span className="mr-2"><ColorDot color={row.Cell_Color_NPI} /></span>{row.Recommended_NPI}</td>
+                  <td className="px-2 py-2 align-top font-mono whitespace-normal break-words"><span className="mr-2"><ColorDot color={row.Cell_Color_CBCode} /></span>{row.Recommended_CBCode}</td>
+                  <td className="px-2 py-2 align-top whitespace-normal break-words" title={row.Recommended_Comments}>{row.Recommended_Comments}</td>
+                  <td className="px-2 py-2 align-top whitespace-nowrap" title={row.Recommended_Source}>
+                    <span className="mr-2"><ColorDot color={row.Cell_Color_Source} /></span>{row.Recommended_Source}
+                  </td>
+                  <td className="px-2 py-2 align-top whitespace-nowrap">
+                    <button
+                      className="rounded border border-line px-2 py-1 text-[11px] font-semibold text-ink/70 hover:bg-field focus:outline-none focus:ring-2 focus:ring-pine/30"
+                      onClick={() => onOpenRow(row)}
+                    >
+                      Details
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {rows.length === 0 && (
+          <div className="border-t border-line px-4 py-10 text-center text-sm text-ink/60">
+            No {REVIEW_FILTERS.find((filter) => filter.value === reviewFilter)?.label.toLowerCase()} rows{selectedRegion ? ` in ${selectedRegion}` : ""}. Try All, another region, or a different filter.
+          </div>
+        )}
       </div>
       )}
     </section>
@@ -1516,7 +1445,6 @@ function UploadPanel({
   uploadPending,
   processPending,
   isProcessing,
-  isCompleting,
   onUploadFiles,
   onProcess,
   onContinue,
@@ -1534,7 +1462,6 @@ function UploadPanel({
   uploadPending: boolean;
   processPending: boolean;
   isProcessing: boolean;
-  isCompleting: boolean;
   onUploadFiles: (files: File[]) => void;
   onProcess: (uploadId: string) => void;
   onContinue: () => void;
@@ -1546,7 +1473,7 @@ function UploadPanel({
   summary: { fileCount: number; totalRows: number; ready: number };
   fileInputRef: React.RefObject<HTMLInputElement>;
 }) {
-  const step = isProcessing || isCompleting ? "process" : inspection ? "confirm" : uploadPending ? "inspect" : "upload";
+  const step = isProcessing ? "process" : inspection ? "confirm" : uploadPending ? "inspect" : "upload";
   const steps = [
     { key: "upload", label: "Upload files" },
     { key: "inspect", label: "Inspect sheets" },
@@ -1613,18 +1540,6 @@ function UploadPanel({
         {jobStatus && <p className="text-sm text-ink/60">Current job: {jobStatus}</p>}
       </div>
 
-      {(isProcessing || isCompleting) && <ProcessingWorkspaceSkeleton completed={isCompleting} />}
-
-      {uploadPending && (
-        <div className="rounded border border-line bg-white p-5">
-          <div className="mb-4">
-            <h3 className="font-semibold">Inspecting files</h3>
-            <p className="text-sm text-ink/60">The assistant is checking sheets, columns, and correction formatting.</p>
-          </div>
-          <UploadInspectionSkeleton />
-        </div>
-      )}
-
       {inspection && (
         <div className="rounded border border-line bg-white p-5">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -1634,10 +1549,10 @@ function UploadPanel({
             </div>
             <button
               className="flex items-center gap-2 rounded bg-pine px-4 py-2 font-semibold text-white"
-              disabled={processPending || isProcessing || isCompleting}
+              disabled={processPending || isProcessing}
               onClick={() => onProcess(inspection.upload_id)}
             >
-              <Play size={16} /> {isProcessing || isCompleting ? "Processing..." : "Process Report"}
+              <Play size={16} /> {isProcessing ? "Processing..." : "Process Report"}
             </button>
           </div>
           <div className="grid gap-3 lg:grid-cols-2">
