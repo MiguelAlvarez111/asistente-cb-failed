@@ -367,6 +367,8 @@ export default function App() {
     () => Object.fromEntries(REVIEW_COLUMNS.map((column) => [column.key, column.width])) as Record<ReviewColumnKey, number>
   );
   const [uploadProgress, setUploadProgress] = useState<UploadProgressState | null>(null);
+  const [activeProcessingJobId, setActiveProcessingJobId] = useState<string | null>(null);
+  const [processStartedAt, setProcessStartedAt] = useState<number | null>(null);
   const [autoOpenedJobId, setAutoOpenedJobId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -398,13 +400,24 @@ export default function App() {
   });
   const jobMutation = useMutation({
     mutationFn: (uploadId: string) => createJob(uploadId, fileOverrides),
+    onMutate: () => {
+      setActiveProcessingJobId("pending");
+      setProcessStartedAt(Date.now());
+      setAutoOpenedJobId(null);
+    },
     onSuccess: (data) => {
       setJobId(data.job_id);
+      setActiveProcessingJobId(data.job_id);
+      setProcessStartedAt((current) => current ?? Date.now());
       setLookupResult(null);
       setSelectedRow(null);
       setAutoOpenedJobId(null);
       setActiveSection("upload");
       window.history.replaceState(null, "", `/?job=${data.job_id}`);
+    },
+    onError: () => {
+      setActiveProcessingJobId(null);
+      setProcessStartedAt(null);
     }
   });
   const jobQuery = useQuery({
@@ -488,6 +501,21 @@ export default function App() {
       return reviewSort.direction === "asc" ? comparison : -comparison;
     });
   }, [reviewFilter, reviewSearch, reviewSort, selectedRegion, sortedRows]);
+  const activeProcessingStatus = activeProcessingJobId && activeProcessingJobId === jobId ? jobQuery.data?.status : undefined;
+  const waitingForResults = Boolean(
+    activeProcessingJobId &&
+      activeProcessingJobId === jobId &&
+      activeProcessingStatus === "COMPLETED" &&
+      !resultsQuery.data
+  );
+  const shouldShowJobProgress = Boolean(
+    activeProcessingJobId &&
+      (activeProcessingJobId === "pending" ||
+        !jobQuery.data ||
+        activeProcessingStatus === "QUEUED" ||
+        activeProcessingStatus === "PROCESSING" ||
+        waitingForResults)
+  );
   const progressState: ProgressDisplayState | null = uploadMutation.isPending
     ? {
         status: uploadProgress?.phase === "inspecting" ? "INSPECTING" : "UPLOADING",
@@ -499,8 +527,17 @@ export default function App() {
         startedAt: uploadProgress?.startedAt,
         indeterminate: uploadProgress?.phase === "inspecting"
       }
-    : jobMutation.isPending
-        ? { status: "QUEUED", progress: 5, message: "Preparing files..." }
+    : shouldShowJobProgress
+        ? {
+            status: waitingForResults ? "COMPLETED" : activeProcessingStatus ?? "QUEUED",
+            progress: waitingForResults ? 100 : activeProcessingStatus ? jobQuery.data?.progress ?? 8 : 8,
+            message: waitingForResults
+              ? "Loading results..."
+              : activeProcessingStatus
+                ? jobQuery.data?.message ?? "Processing report..."
+                : "Preparing files...",
+            startedAt: processStartedAt ?? undefined
+          }
         : jobQuery.data && (jobQuery.data.status !== "COMPLETED" || resultsQuery.isFetching)
           ? {
               status: jobQuery.data.status,
@@ -508,7 +545,7 @@ export default function App() {
               message: jobQuery.data.status === "COMPLETED" ? "Loading results..." : jobQuery.data.message
             }
           : null;
-  const isJobProcessing = jobMutation.isPending || jobQuery.data?.status === "QUEUED" || jobQuery.data?.status === "PROCESSING";
+  const isJobProcessing = shouldShowJobProgress || jobMutation.isPending || jobQuery.data?.status === "QUEUED" || jobQuery.data?.status === "PROCESSING";
   const isJobBusy = isJobProcessing;
 
   const showToast = useCallback((message: string) => {
@@ -532,6 +569,8 @@ export default function App() {
     setReviewFilter("READY");
     setReviewSearch("");
     setReviewRegion("");
+    setActiveProcessingJobId(null);
+    setProcessStartedAt(null);
     setAutoOpenedJobId(null);
     setToast(null);
     setActiveSection("upload");
@@ -573,6 +612,8 @@ export default function App() {
 
   useEffect(() => {
     if (!jobId || jobQuery.data?.status !== "COMPLETED" || !resultsQuery.data || autoOpenedJobId === jobId) return undefined;
+    setActiveProcessingJobId(null);
+    setProcessStartedAt(null);
     setAutoOpenedJobId(jobId);
     setActiveSection("search");
     window.setTimeout(() => searchInputRef.current?.focus(), 100);
@@ -919,7 +960,10 @@ function ProcessingProgress({
   const displayMessage = message || (status === "QUEUED" ? "Preparing files..." : "Processing report...");
 
   return (
-    <section className={`mx-auto mb-6 max-w-3xl rounded border p-5 shadow-sm ${isFailed ? "border-coral bg-red-50" : "border-line bg-white"}`}>
+    <section
+      aria-live="polite"
+      className={`mx-auto mb-6 min-h-[116px] max-w-3xl rounded border p-5 shadow-sm transition-all duration-300 ${isFailed ? "border-coral bg-red-50" : "border-line bg-white"}`}
+    >
       <div className="mb-3 flex items-center justify-between gap-4">
         <div>
           <p className="text-sm font-semibold">{title}</p>
