@@ -1575,7 +1575,7 @@ function UploadPanel({
           })}
         </div>
         <label
-          className={`group relative mb-3 overflow-hidden rounded-lg border-2 border-dashed p-6 text-center transition ${
+          className={`group relative mb-3 block overflow-hidden rounded-lg border-2 border-dashed p-6 text-center transition ${
             isDraggingFiles
               ? "border-pine bg-green-50 shadow-md ring-4 ring-pine/10"
               : "border-line bg-field/40 hover:border-pine/45 hover:bg-white"
