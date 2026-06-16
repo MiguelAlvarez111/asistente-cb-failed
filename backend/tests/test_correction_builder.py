@@ -231,6 +231,62 @@ def test_provider_missing_fields_completes_from_provider_dictionary(monkeypatch)
     assert instruction.cell_color_source == "red"
 
 
+def test_provider_missing_fields_completes_from_name_with_extra_system_tokens(monkeypatch) -> None:
+    monkeypatch.setattr("backend.app.services.validator.get_npi_data", lambda npi: None)
+    row = {"type": "Provider", "last_title": "Segan", "first": "Shivani Pj", "npi": "", "cbcode": "", "comments": "", "source": ""}
+    index = _provider_dictionary(
+        [
+            {
+                "npi_number": "1932369964",
+                "prov_mnemonic": "TSESH",
+                "last_name": "SEGAN",
+                "first_name": "SHIVANI",
+                "deactivation_flag": "",
+            }
+        ]
+    )
+
+    instruction, validation = _run(row, index)
+
+    assert validation.status == ValidationStatus.CBCODE_FOUND
+    assert instruction.action == FinalAction.COMPLETE_INFO
+    assert instruction.apply_this == "YES"
+    assert instruction.recommended_npi == "1932369964"
+    assert instruction.recommended_cbcode == "TSESH"
+    assert instruction.recommended_source == "Dictionary"
+
+
+def test_provider_extra_token_name_conflict_requires_manual_review(monkeypatch) -> None:
+    monkeypatch.setattr("backend.app.services.validator.get_npi_data", lambda npi: None)
+    row = {"type": "Provider", "last_title": "Segan", "first": "Shivani Pj", "npi": "", "cbcode": "", "comments": "", "source": ""}
+    index = _provider_dictionary(
+        [
+            {
+                "npi_number": "1932369964",
+                "prov_mnemonic": "TSESH",
+                "last_name": "SEGAN",
+                "first_name": "SHIVANI",
+                "deactivation_flag": "",
+            },
+            {
+                "npi_number": "9999999999",
+                "prov_mnemonic": "TSEG2",
+                "last_name": "SEGAN",
+                "first_name": "SHIVANI",
+                "middle_name": "PJ",
+                "deactivation_flag": "",
+            },
+        ]
+    )
+
+    instruction, validation = _run(row, index)
+
+    assert validation.status == ValidationStatus.MULTIPLE_MATCHES
+    assert instruction.action == FinalAction.MANUAL_REVIEW
+    assert instruction.apply_this == "NO"
+    assert instruction.needs_manual_review is True
+
+
 def test_npi_registry_only_is_not_complete_info(monkeypatch) -> None:
     monkeypatch.setattr("backend.app.services.validator.get_npi_data", lambda npi: {"full_name": "JONES, DERRICK", "npi": npi})
     row = {"last_title": "JONES", "first": "DERRICK", "npi": "1689712655", "cbcode": "", "comments": ""}

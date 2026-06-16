@@ -69,3 +69,27 @@ def test_lookup_provider_name_normalizes_degree_and_comma() -> None:
     assert len(matches) == 1
     assert matches[0].npi == "1134782147"
     assert matches[0].cbcode == "TEDAJ"
+
+
+def test_lookup_provider_name_allows_extra_system_name_tokens() -> None:
+    dictionary = LoadedDictionary(
+        filename="USAP Providers.txt",
+        dictionary_type=DictionaryType.USAP_PROVIDERS,
+        df=pd.DataFrame(
+            [
+                {
+                    "npi_number": "1932369964",
+                    "prov_mnemonic": "TSESH",
+                    "last_name": "SEGAN",
+                    "first_name": "SHIVANI",
+                    "deactivation_flag": "",
+                }
+            ]
+        ),
+    )
+
+    matches = DictionaryIndex([dictionary]).lookup(provider_name="Segan Shivani Pj", dictionary_types={DictionaryType.USAP_PROVIDERS})
+
+    assert len(matches) == 1
+    assert matches[0].npi == "1932369964"
+    assert matches[0].cbcode == "TSESH"

@@ -32,9 +32,15 @@ def load_dictionary(path: Path, filename: str) -> LoadedDictionary | None:
     return LoadedDictionary(filename=filename, dictionary_type=detection.detected_type, df=df)
 
 
+def _clean_name_part(value: Any) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
 def _provider_name(row: pd.Series) -> str:
-    parts = [row.get("last_name", ""), row.get("first_name", ""), row.get("middle_name", "")]
-    return " ".join(part for part in parts if part).strip() or str(row.get("name", "")).strip()
+    parts = [_clean_name_part(row.get("last_name", "")), _clean_name_part(row.get("first_name", "")), _clean_name_part(row.get("middle_name", ""))]
+    return " ".join(part for part in parts if part).strip() or _clean_name_part(row.get("name", ""))
 
 
 def _normalize_match_value(value: Any) -> str:
@@ -46,6 +52,18 @@ def _name_tokens(value: Any) -> list[str]:
     return [token for token in _normalize_match_value(value).split() if token not in DEGREE_TOKENS]
 
 
+def _tokens_are_ordered_subset(shorter: list[str], longer: list[str]) -> bool:
+    if len(shorter) < 2 or len(shorter) > len(longer):
+        return False
+    cursor = 0
+    for token in longer:
+        if token == shorter[cursor]:
+            cursor += 1
+            if cursor == len(shorter):
+                return True
+    return False
+
+
 def _provider_name_matches(needle: str, candidate: str) -> bool:
     needle_tokens = _name_tokens(needle)
     candidate_tokens = _name_tokens(candidate)
@@ -53,7 +71,11 @@ def _provider_name_matches(needle: str, candidate: str) -> bool:
         return False
     needle_text = " ".join(needle_tokens)
     candidate_text = " ".join(candidate_tokens)
-    return needle_text in candidate_text or all(token in candidate_tokens for token in needle_tokens)
+    return (
+        needle_text in candidate_text
+        or all(token in candidate_tokens for token in needle_tokens)
+        or _tokens_are_ordered_subset(candidate_tokens, needle_tokens)
+    )
 
 
 def _effective_key(match: DictionaryMatch) -> tuple[str, str, str]:
