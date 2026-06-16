@@ -367,6 +367,8 @@ export default function App() {
     () => Object.fromEntries(REVIEW_COLUMNS.map((column) => [column.key, column.width])) as Record<ReviewColumnKey, number>
   );
   const [uploadProgress, setUploadProgress] = useState<UploadProgressState | null>(null);
+  const [processingHandoff, setProcessingHandoff] = useState(false);
+  const [autoOpenedJobId, setAutoOpenedJobId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   const sessionQuery = useQuery({ queryKey: ["session"], queryFn: session });
@@ -400,9 +402,11 @@ export default function App() {
     onSuccess: (data) => {
       setJobId(data.job_id);
       setLookupResult(null);
-      setActiveSection("search");
+      setSelectedRow(null);
+      setProcessingHandoff(false);
+      setAutoOpenedJobId(null);
+      setActiveSection("upload");
       window.history.replaceState(null, "", `/?job=${data.job_id}`);
-      window.setTimeout(() => searchInputRef.current?.focus(), 100);
     }
   });
   const jobQuery = useQuery({
@@ -497,16 +501,19 @@ export default function App() {
         startedAt: uploadProgress?.startedAt,
         indeterminate: uploadProgress?.phase === "inspecting"
       }
-    : jobMutation.isPending
-      ? { status: "QUEUED", progress: 5, message: "Preparing files..." }
-      : jobQuery.data && (jobQuery.data.status !== "COMPLETED" || resultsQuery.isFetching)
-        ? {
-            status: jobQuery.data.status,
-            progress: jobQuery.data.status === "COMPLETED" ? 100 : jobQuery.data.progress,
-            message: jobQuery.data.status === "COMPLETED" ? "Completed" : jobQuery.data.message
-          }
-        : null;
-  const isJobBusy = jobMutation.isPending || jobQuery.data?.status === "QUEUED" || jobQuery.data?.status === "PROCESSING";
+    : processingHandoff
+      ? { status: "COMPLETED", progress: 100, message: "Correction cockpit ready. Opening Search..." }
+      : jobMutation.isPending
+        ? { status: "QUEUED", progress: 5, message: "Preparing files..." }
+        : jobQuery.data && (jobQuery.data.status !== "COMPLETED" || resultsQuery.isFetching)
+          ? {
+              status: jobQuery.data.status,
+              progress: jobQuery.data.status === "COMPLETED" ? 100 : jobQuery.data.progress,
+              message: jobQuery.data.status === "COMPLETED" ? "Loading results..." : jobQuery.data.message
+            }
+          : null;
+  const isJobProcessing = jobMutation.isPending || jobQuery.data?.status === "QUEUED" || jobQuery.data?.status === "PROCESSING";
+  const isJobBusy = isJobProcessing;
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -529,6 +536,8 @@ export default function App() {
     setReviewFilter("READY");
     setReviewSearch("");
     setReviewRegion("");
+    setProcessingHandoff(false);
+    setAutoOpenedJobId(null);
     setToast(null);
     setActiveSection("upload");
     window.history.replaceState(null, "", "/");
@@ -568,11 +577,16 @@ export default function App() {
   }, [activeSection]);
 
   useEffect(() => {
-    if (jobQuery.data?.status === "COMPLETED") {
+    if (!jobId || jobQuery.data?.status !== "COMPLETED" || !resultsQuery.data || autoOpenedJobId === jobId) return undefined;
+    setProcessingHandoff(true);
+    const timer = window.setTimeout(() => {
+      setProcessingHandoff(false);
+      setAutoOpenedJobId(jobId);
       setActiveSection("search");
       window.setTimeout(() => searchInputRef.current?.focus(), 100);
-    }
-  }, [jobQuery.data?.status]);
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [autoOpenedJobId, jobId, jobQuery.data?.status, resultsQuery.data]);
 
   if (sessionQuery.isLoading) {
     return <div className="p-8">Loading...</div>;
@@ -666,6 +680,7 @@ export default function App() {
           onGoUpload={() => setActiveSection("upload")}
           onGoReview={() => setActiveSection("review")}
           onClearSearch={clearSearch}
+          isLoadingResults={Boolean(jobId && jobQuery.data?.status === "COMPLETED" && resultsQuery.isFetching && rows.length === 0)}
         />
       )}
 
@@ -686,6 +701,7 @@ export default function App() {
           columnWidths={reviewColumnWidths}
           setColumnWidths={setReviewColumnWidths}
           onOpenRow={setSelectedRow}
+          isLoading={Boolean(jobId && jobQuery.data?.status === "COMPLETED" && resultsQuery.isFetching && rows.length === 0)}
         />
       )}
 
@@ -696,6 +712,8 @@ export default function App() {
           setFileOverrides={setFileOverrides}
           uploadPending={uploadMutation.isPending}
           processPending={jobMutation.isPending}
+          isProcessing={isJobProcessing}
+          isCompleting={processingHandoff || Boolean(jobQuery.data?.status === "COMPLETED" && resultsQuery.isFetching)}
           onUploadFiles={(files) => uploadMutation.mutate(files)}
           onProcess={(uploadId) => jobMutation.mutate(uploadId)}
           onContinue={() => setActiveSection("search")}
@@ -744,7 +762,8 @@ function MainSearch({
   onCopy,
   onGoUpload,
   onGoReview,
-  onClearSearch
+  onClearSearch,
+  isLoadingResults
 }: {
   inputRef: React.RefObject<HTMLInputElement>;
   sinInput: string;
@@ -762,6 +781,7 @@ function MainSearch({
   onGoUpload: () => void;
   onGoReview: () => void;
   onClearSearch: () => void;
+  isLoadingResults: boolean;
 }) {
   const hasResult = Boolean(lookupResult);
   return (
@@ -816,7 +836,9 @@ function MainSearch({
         )}
       </div>
 
-      {!lookupResult && (
+      {(isSearching || isLoadingResults) && <SearchResultSkeleton />}
+
+      {!lookupResult && !isSearching && !isLoadingResults && (
         <>
           <SummaryCards summary={summary} jobStatus={jobStatus} />
           <div className="rounded border border-line bg-white p-4 text-center text-sm text-ink/65">
@@ -829,9 +851,9 @@ function MainSearch({
         </>
       )}
 
-      {lookupResult?.match_count === 0 && <NoMatchState onGoUpload={onGoUpload} onGoReview={onGoReview} />}
+      {!isSearching && lookupResult?.match_count === 0 && <NoMatchState onGoUpload={onGoUpload} onGoReview={onGoReview} />}
 
-      {lookupResult?.match_count === 1 && (
+      {!isSearching && lookupResult?.match_count === 1 && (
         <SinResultCard
           match={lookupResult.matches[0]}
           row={rows.find((row) => row.row_id === lookupResult.matches[0].row_id)}
@@ -840,7 +862,7 @@ function MainSearch({
         />
       )}
 
-      {lookupResult && lookupResult.match_count > 1 && (
+      {!isSearching && lookupResult && lookupResult.match_count > 1 && (
         <MultipleMatchResults
           matches={lookupResult.matches}
           onOpen={onOpenRow}
@@ -927,6 +949,135 @@ function ProcessingProgress({
             style={{ width: `${visiblePercent}%` }}
           />
         )}
+      </div>
+    </section>
+  );
+}
+
+function SkeletonBlock({ className = "" }: { className?: string }) {
+  return <div className={`skeleton-shimmer rounded bg-field ${className}`} />;
+}
+
+function SearchResultSkeleton() {
+  return (
+    <section className="rounded border border-line bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="space-y-2">
+          <SkeletonBlock className="h-3 w-16" />
+          <SkeletonBlock className="h-7 w-80 max-w-full" />
+          <SkeletonBlock className="h-4 w-64 max-w-full" />
+        </div>
+        <div className="flex gap-2">
+          <SkeletonBlock className="h-7 w-20 rounded-full" />
+          <SkeletonBlock className="h-7 w-28 rounded-full" />
+          <SkeletonBlock className="h-7 w-28 rounded-full" />
+        </div>
+      </div>
+      <div className="mt-4 grid gap-3 rounded border border-line bg-field/40 p-3 md:grid-cols-[1fr_auto_1fr]">
+        <div className="space-y-2">
+          <SkeletonBlock className="h-3 w-32" />
+          <SkeletonBlock className="h-6 w-56" />
+        </div>
+        <div className="hidden text-2xl font-semibold text-coral md:block">→</div>
+        <div className="space-y-2">
+          <SkeletonBlock className="h-3 w-36" />
+          <SkeletonBlock className="h-6 w-64" />
+        </div>
+      </div>
+      <div className="mt-4 rounded border border-line">
+        <div className="border-b border-line px-3 py-2">
+          <SkeletonBlock className="h-4 w-40" />
+        </div>
+        <div className="grid grid-cols-7 gap-px bg-line text-sm">
+          {Array.from({ length: 14 }).map((_, index) => (
+            <div key={index} className="bg-white p-3">
+              <SkeletonBlock className="h-5 w-full" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ReviewSheetSkeleton() {
+  return (
+    <div className="max-h-[640px] overflow-hidden rounded border border-line">
+      <div className="grid grid-cols-[230px_82px_128px_360px_128px_260px_220px_150px_70px] bg-field text-xs">
+        {REVIEW_COLUMNS.map((column) => (
+          <div key={column.key} className="border-b border-line px-2 py-3">
+            <SkeletonBlock className="h-3 w-20" />
+          </div>
+        ))}
+      </div>
+      <div className="divide-y divide-line/80">
+        {Array.from({ length: 8 }).map((_, rowIndex) => (
+          <div key={rowIndex} className="grid grid-cols-[230px_82px_128px_360px_128px_260px_220px_150px_70px]">
+            {REVIEW_COLUMNS.map((column) => (
+              <div key={column.key} className="px-2 py-3">
+                <SkeletonBlock className={`h-4 ${column.key === "name" ? "w-64" : column.key === "sin" ? "w-44" : "w-20"}`} />
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function UploadInspectionSkeleton() {
+  return (
+    <div className="grid gap-3 lg:grid-cols-2">
+      {Array.from({ length: 4 }).map((_, index) => (
+        <div key={index} className="rounded border border-line bg-white p-3 shadow-sm">
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div className="flex min-w-0 gap-3">
+              <SkeletonBlock className="h-9 w-9 shrink-0" />
+              <div className="space-y-2">
+                <SkeletonBlock className="h-4 w-52" />
+                <SkeletonBlock className="h-3 w-32" />
+              </div>
+            </div>
+            <SkeletonBlock className="h-7 w-24 rounded-full" />
+          </div>
+          <SkeletonBlock className="h-4 w-36" />
+          <SkeletonBlock className="mt-3 h-10 w-full" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ProcessingWorkspaceSkeleton({ completed = false }: { completed?: boolean }) {
+  return (
+    <section className="rounded border border-line bg-white p-5 shadow-sm">
+      <div className="mb-4 flex items-center justify-between gap-4">
+        <div>
+          <p className="text-sm font-semibold text-pine">{completed ? "Results are ready" : "Building correction cockpit"}</p>
+          <p className="text-sm text-ink/60">
+            {completed ? "Opening Search with the processed results..." : "Reading rows, validating dictionaries, and preparing the analyst view."}
+          </p>
+        </div>
+        <SkeletonBlock className="h-9 w-28 rounded-full" />
+      </div>
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="rounded border border-line p-3">
+          <SkeletonBlock className="h-3 w-24" />
+          <SkeletonBlock className="mt-3 h-8 w-16" />
+        </div>
+        <div className="rounded border border-line p-3">
+          <SkeletonBlock className="h-3 w-28" />
+          <SkeletonBlock className="mt-3 h-8 w-20" />
+        </div>
+        <div className="rounded border border-line p-3">
+          <SkeletonBlock className="h-3 w-24" />
+          <SkeletonBlock className="mt-3 h-8 w-24" />
+        </div>
+      </div>
+      <div className="mt-4 space-y-2">
+        {Array.from({ length: 5 }).map((_, index) => (
+          <SkeletonBlock key={index} className="h-9 w-full" />
+        ))}
       </div>
     </section>
   );
@@ -1157,7 +1308,8 @@ function ReviewSheet({
   setReviewSort,
   columnWidths,
   setColumnWidths,
-  onOpenRow
+  onOpenRow,
+  isLoading
 }: {
   rows: RowResult[];
   allRows: RowResult[];
@@ -1174,6 +1326,7 @@ function ReviewSheet({
   columnWidths: Record<ReviewColumnKey, number>;
   setColumnWidths: React.Dispatch<React.SetStateAction<Record<ReviewColumnKey, number>>>;
   onOpenRow: (row: RowResult) => void;
+  isLoading: boolean;
 }) {
   const rowMatchesFilter = useCallback((row: RowResult, filter: ReviewFilter) => (
     filter === "READY" ? row.Apply_This === "YES" : row.Final_Action === filter
@@ -1268,6 +1421,9 @@ function ReviewSheet({
           </button>
         ))}
       </div>
+      {isLoading ? (
+        <ReviewSheetSkeleton />
+      ) : (
       <div className="max-h-[640px] overflow-auto rounded border border-line">
         <table className="table-fixed text-left text-xs" style={{ minWidth: REVIEW_COLUMNS.reduce((sum, column) => sum + (columnWidths[column.key] ?? column.width), 0) }}>
           <colgroup>
@@ -1345,6 +1501,7 @@ function ReviewSheet({
           </tbody>
         </table>
       </div>
+      )}
     </section>
   );
 }
@@ -1355,6 +1512,8 @@ function UploadPanel({
   setFileOverrides,
   uploadPending,
   processPending,
+  isProcessing,
+  isCompleting,
   onUploadFiles,
   onProcess,
   onContinue,
@@ -1371,6 +1530,8 @@ function UploadPanel({
   setFileOverrides: (overrides: Record<string, FileKind>) => void;
   uploadPending: boolean;
   processPending: boolean;
+  isProcessing: boolean;
+  isCompleting: boolean;
   onUploadFiles: (files: File[]) => void;
   onProcess: (uploadId: string) => void;
   onContinue: () => void;
@@ -1382,7 +1543,7 @@ function UploadPanel({
   summary: { fileCount: number; totalRows: number; ready: number };
   fileInputRef: React.RefObject<HTMLInputElement>;
 }) {
-  const step = processPending ? "process" : inspection ? "confirm" : uploadPending ? "inspect" : "upload";
+  const step = isProcessing || isCompleting ? "process" : inspection ? "confirm" : uploadPending ? "inspect" : "upload";
   const steps = [
     { key: "upload", label: "Upload files" },
     { key: "inspect", label: "Inspect sheets" },
@@ -1449,6 +1610,18 @@ function UploadPanel({
         {jobStatus && <p className="text-sm text-ink/60">Current job: {jobStatus}</p>}
       </div>
 
+      {(isProcessing || isCompleting) && <ProcessingWorkspaceSkeleton completed={isCompleting} />}
+
+      {uploadPending && (
+        <div className="rounded border border-line bg-white p-5">
+          <div className="mb-4">
+            <h3 className="font-semibold">Inspecting files</h3>
+            <p className="text-sm text-ink/60">The assistant is checking sheets, columns, and correction formatting.</p>
+          </div>
+          <UploadInspectionSkeleton />
+        </div>
+      )}
+
       {inspection && (
         <div className="rounded border border-line bg-white p-5">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -1458,10 +1631,10 @@ function UploadPanel({
             </div>
             <button
               className="flex items-center gap-2 rounded bg-pine px-4 py-2 font-semibold text-white"
-              disabled={processPending}
+              disabled={processPending || isProcessing || isCompleting}
               onClick={() => onProcess(inspection.upload_id)}
             >
-              <Play size={16} /> {processPending ? "Processing..." : "Process Report"}
+              <Play size={16} /> {isProcessing || isCompleting ? "Processing..." : "Process Report"}
             </button>
           </div>
           <div className="grid gap-3 lg:grid-cols-2">

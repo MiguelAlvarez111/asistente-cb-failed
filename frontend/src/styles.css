@@ -32,3 +32,18 @@ select {
 .progress-sweep {
   animation: progress-sweep 1.4s ease-in-out infinite;
 }
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.skeleton-shimmer {
+  background-image: linear-gradient(90deg, #eef1eb 0%, #f8faf6 45%, #e7ece4 80%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.45s ease-in-out infinite;
+}
