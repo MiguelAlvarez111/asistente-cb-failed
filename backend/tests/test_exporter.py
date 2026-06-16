@@ -28,6 +28,19 @@ EXPECTED_CLEAN_COLUMNS = [
     "Reason",
 ]
 
+EXPECTED_FINAL_COLUMNS = [
+    "Type",
+    "Last - Title",
+    "First",
+    "NPI",
+    "CBcode",
+    "Comments",
+    "Source",
+    "Practice",
+    "DOS",
+    "SIN",
+]
+
 TECHNICAL_COLUMNS = [
     "Bot_Accion",
     "AI_Action",
@@ -73,7 +86,7 @@ def _row(
         SIN=sin,
         Region=region,
         Row_Index=8,
-        sanitized_original={"npi": "1234567890"},
+        sanitized_original={"npi": "1234567890", "practice": "MCD Shared", "dos": "2026-05-21"},
         Bot_Accion="COMPLETE_INFO",
         Bot_Suggestion="ok",
         Bot_Details="ok",
@@ -160,33 +173,73 @@ def test_numbers_ready_export_is_clean_and_grouped_by_region() -> None:
     assert workbook.sheetnames[:4] == ["Summary", "Apply Ready", "MARYLAND", "TEXAS"]
 
     df = pd.read_excel(BytesIO(data), sheet_name="MARYLAND")
-    assert list(df.columns) == EXPECTED_CLEAN_COLUMNS
+    assert list(df.columns) == EXPECTED_FINAL_COLUMNS
     assert all(column not in df.columns for column in TECHNICAL_COLUMNS)
-    assert df.loc[0, "Current Provider"] == "DOE, JANE"
-    assert df.loc[0, "Recommended Provider"] == "SMITH, ALICE"
+    assert df.loc[0, "Type"] == "Provider"
+    assert df.loc[0, "Last - Title"] == "SMITH"
+    assert df.loc[0, "First"] == "ALICE"
+    assert str(df.loc[0, "NPI"]) == "1987654321"
+    assert df.loc[0, "CBcode"] == "CB1"
+    assert df.loc[0, "Practice"] == "MCD Shared"
+    assert str(df.loc[0, "DOS"]) == "2026-05-21"
+    assert df.loc[0, "SIN"] == "MD1"
 
     apply_ready = pd.read_excel(BytesIO(data), sheet_name="Apply Ready")
-    assert list(apply_ready.columns) == EXPECTED_CLEAN_COLUMNS
+    assert list(apply_ready.columns) == EXPECTED_FINAL_COLUMNS
     assert apply_ready["SIN"].tolist() == ["MD1"]
 
     summary = pd.read_excel(BytesIO(data), sheet_name="Summary")
     assert {"Total rows", "Ready to Apply", "Change Ticket", "Complete Fields"}.issubset(set(summary["Metric"]))
 
 
-def test_numbers_ready_styles_visible_recommended_cells_without_color_columns() -> None:
-    data = rows_to_workbook([_row(row_id="md", apply_this="YES")], kind="numbers_ready")
-    workbook = load_workbook(BytesIO(data))
+def test_numbers_ready_styles_change_ticket_with_rich_text_without_color_columns() -> None:
+    data = rows_to_workbook(
+        [
+            _row(
+                row_id="md",
+                apply_this="YES",
+                final_action="CHANGE_TICKET",
+                quick_action="Change ticket",
+                current_last="TANG",
+                current_first="AN THIEN",
+                recommended_last="TANG",
+                recommended_first="ANDREW",
+            )
+        ],
+        kind="numbers_ready",
+    )
+    workbook = load_workbook(BytesIO(data), rich_text=True)
     worksheet = workbook["MARYLAND"]
     headers = [cell.value for cell in worksheet[1]]
     assert "Cell_Color_NPI" not in headers
     assert "Cell_Color_CBCode" not in headers
+    assert "Current Provider" not in headers
+    assert "Recommended Provider" not in headers
 
     columns = {header: index + 1 for index, header in enumerate(headers)}
-    assert worksheet.cell(row=2, column=columns["Recommended Provider"]).fill.fgColor.rgb == "FFFFC7CE"
-    assert worksheet.cell(row=2, column=columns["Recommended NPI"]).fill.fgColor.rgb == "FFC6EFCE"
-    assert worksheet.cell(row=2, column=columns["Recommended CBCode"]).fill.fgColor.rgb == "FFC6EFCE"
-    assert worksheet.cell(row=2, column=columns["Comments"]).fill.fgColor.rgb == "FFFFC7CE"
-    assert worksheet.cell(row=2, column=columns["Source"]).fill.fgColor.rgb == "FFC6EFCE"
+    last_cell = worksheet.cell(row=2, column=columns["Last - Title"])
+    first_cell = worksheet.cell(row=2, column=columns["First"])
+    npi_cell = worksheet.cell(row=2, column=columns["NPI"])
+    assert str(last_cell.value) == "TANG TANG"
+    assert str(first_cell.value) == "AN THIEN ANDREW"
+    assert last_cell.value[0].font.strike is True
+    assert last_cell.value[2].font.color.rgb == "FFFF0000"
+    assert first_cell.value[0].font.strike is True
+    assert first_cell.value[2].font.color.rgb == "FFFF0000"
+    assert npi_cell.value[0].font.strike is True
+    assert npi_cell.value[2].font.color.rgb == "FFFF0000"
+    assert worksheet.cell(row=2, column=columns["Comments"]).value[0].font.color.rgb == "FFFF0000"
+
+
+def test_numbers_ready_complete_info_does_not_use_rich_strikethrough() -> None:
+    data = rows_to_workbook([_row(row_id="md", apply_this="YES")], kind="numbers_ready")
+    workbook = load_workbook(BytesIO(data), rich_text=True)
+    worksheet = workbook["MARYLAND"]
+    headers = [cell.value for cell in worksheet[1]]
+    columns = {header: index + 1 for index, header in enumerate(headers)}
+    last_cell = worksheet.cell(row=2, column=columns["Last - Title"])
+    assert last_cell.value == "SMITH"
+    assert getattr(last_cell.value, "font", None) is None
 
 
 def test_full_export_download_does_not_delete_job_files(tmp_path) -> None:

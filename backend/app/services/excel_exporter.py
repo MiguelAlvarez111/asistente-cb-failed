@@ -2,6 +2,8 @@ from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
+from openpyxl.cell.rich_text import CellRichText, TextBlock
+from openpyxl.cell.text import InlineFont
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
@@ -95,6 +97,19 @@ CLEAN_COLUMNS = [
     "Reason",
 ]
 
+FINAL_DELIVERY_COLUMNS = [
+    "Type",
+    "Last - Title",
+    "First",
+    "NPI",
+    "CBcode",
+    "Comments",
+    "Source",
+    "Practice",
+    "DOS",
+    "SIN",
+]
+
 CLEAN_COLUMN_WIDTHS = {
     "SIN": 22,
     "Row": 8,
@@ -111,6 +126,19 @@ CLEAN_COLUMN_WIDTHS = {
     "Comments": 34,
     "Source": 16,
     "Reason": 44,
+}
+
+FINAL_COLUMN_WIDTHS = {
+    "Type": 12,
+    "Last - Title": 28,
+    "First": 38,
+    "NPI": 26,
+    "CBcode": 22,
+    "Comments": 28,
+    "Source": 18,
+    "Practice": 22,
+    "DOS": 14,
+    "SIN": 34,
 }
 
 ACTION_LABELS = {
@@ -140,6 +168,9 @@ MONO_FONT = Font(name="Courier New")
 MONO_COLUMNS = {"SIN", "Current NPI", "Current CBCode", "Recommended NPI", "Recommended CBCode"}
 CENTER_COLUMNS = {"Row", "Type", "Action", "Apply", "Status"}
 WRAP_COLUMNS = {"Current Provider", "Recommended Provider", "Comments", "Reason"}
+FINAL_WRAP_COLUMNS = {"Last - Title", "First", "Comments", "Practice", "SIN"}
+FINAL_MONO_COLUMNS = {"NPI", "CBcode", "SIN"}
+FINAL_CENTER_COLUMNS = {"Type", "DOS"}
 
 
 def _export_row(row: RowDetail) -> dict[str, object]:
@@ -174,6 +205,88 @@ def _work_status_label(row: RowDetail) -> str:
 
 def _reason(row: RowDetail) -> str:
     return row.Manual_Reason or row.Correction_Summary or ""
+
+
+def _original_value(row: RowDetail, key: str) -> str:
+    original = row.sanitized_original or {}
+    return str(original.get(key, "") or "").strip()
+
+
+def _recommended_or_current(recommended: str | None, current: str | None) -> str:
+    recommended_text = str(recommended or "").strip()
+    current_text = str(current or "").strip()
+    return recommended_text or current_text
+
+
+def _combined_plain(current: str | None, recommended: str | None, *, include_current_when_same: bool = True) -> str:
+    current_text = str(current or "").strip()
+    recommended_text = str(recommended or "").strip()
+    if current_text and recommended_text:
+        if current_text == recommended_text and not include_current_when_same:
+            return recommended_text
+        return f"{current_text} {recommended_text}"
+    return recommended_text or current_text
+
+
+def _final_delivery_row(row: RowDetail) -> dict[str, object]:
+    is_change_ticket = row.Final_Action == "CHANGE_TICKET"
+    current_last = row.Current_Last_Title
+    current_first = row.Current_First
+    current_npi = row.Current_NPI
+    current_cbcode = row.Current_CBCode
+    recommended_last = row.Recommended_Last_Title
+    recommended_first = row.Recommended_First
+    recommended_npi = row.Recommended_NPI
+    recommended_cbcode = row.Recommended_CBCode
+
+    if is_change_ticket:
+        last_title = _combined_plain(current_last, recommended_last)
+        first = _combined_plain(current_first, recommended_first)
+        npi = _combined_plain(current_npi, recommended_npi)
+        cbcode = _combined_plain(current_cbcode, recommended_cbcode)
+    else:
+        last_title = _recommended_or_current(recommended_last, current_last)
+        first = _recommended_or_current(recommended_first, current_first)
+        npi = _recommended_or_current(recommended_npi, current_npi)
+        cbcode = _recommended_or_current(recommended_cbcode, current_cbcode)
+
+    return {
+        "Type": row.Current_Type or row.Recommended_Type,
+        "Last - Title": last_title,
+        "First": first,
+        "NPI": npi,
+        "CBcode": cbcode,
+        "Comments": row.Recommended_Comments,
+        "Source": row.Recommended_Source,
+        "Practice": _original_value(row, "practice"),
+        "DOS": _original_value(row, "dos"),
+        "SIN": row.SIN,
+    }
+
+
+def _rich_change_value(current: str | None, recommended: str | None, *, include_current_when_same: bool = True) -> CellRichText | str:
+    current_text = str(current or "").strip()
+    recommended_text = str(recommended or "").strip()
+    if current_text and recommended_text:
+        if current_text == recommended_text and not include_current_when_same:
+            return recommended_text
+        return CellRichText(
+            [
+                TextBlock(InlineFont(strike=True), current_text),
+                " ",
+                TextBlock(InlineFont(color="FFFF0000"), recommended_text),
+            ]
+        )
+    if recommended_text:
+        return CellRichText([TextBlock(InlineFont(color="FFFF0000"), recommended_text)])
+    return current_text
+
+
+def _rich_red_value(value: str | None) -> CellRichText | str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return CellRichText([TextBlock(InlineFont(color="FFFF0000"), text)])
 
 
 def _clean_export_row(row: RowDetail, *, source_override: str | None = None) -> dict[str, object]:
@@ -221,6 +334,10 @@ def _clean_frame(rows: list[RowDetail], *, source_override: str | None = None) -
         pd.DataFrame([_clean_export_row(row, source_override=source_override) for row in rows], columns=CLEAN_COLUMNS),
         [_clean_color_context(row, source_override=source_override) for row in rows],
     )
+
+
+def _final_delivery_frame(rows: list[RowDetail]) -> pd.DataFrame:
+    return pd.DataFrame([_final_delivery_row(row) for row in rows], columns=FINAL_DELIVERY_COLUMNS)
 
 
 def _apply_color_styles(writer: pd.ExcelWriter, sheet_name: str, df: pd.DataFrame) -> None:
@@ -280,11 +397,65 @@ def _style_clean_sheet(writer: pd.ExcelWriter, sheet_name: str, df: pd.DataFrame
                 )
 
 
+def _style_final_delivery_sheet(writer: pd.ExcelWriter, sheet_name: str, df: pd.DataFrame, rows: list[RowDetail]) -> None:
+    worksheet = writer.sheets[sheet_name]
+    columns = {column: index + 1 for index, column in enumerate(df.columns)}
+    last_column = get_column_letter(max(len(df.columns), 1))
+    worksheet.freeze_panes = "A2"
+    worksheet.auto_filter.ref = f"A1:{last_column}{max(len(df) + 1, 1)}"
+
+    for index, column in enumerate(df.columns, start=1):
+        cell = worksheet.cell(row=1, column=index)
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.border = THIN_BORDER
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        worksheet.column_dimensions[get_column_letter(index)].width = FINAL_COLUMN_WIDTHS.get(column, 16)
+
+    for row_number in range(2, len(df) + 2):
+        if row_number % 2 == 0:
+            for column_index in range(1, len(df.columns) + 1):
+                worksheet.cell(row=row_number, column=column_index).fill = SUBTLE_ROW_FILL
+        worksheet.row_dimensions[row_number].height = 24
+        for column_name, column_index in columns.items():
+            cell = worksheet.cell(row=row_number, column=column_index)
+            horizontal = "center" if column_name in FINAL_CENTER_COLUMNS else "left"
+            cell.alignment = Alignment(horizontal=horizontal, vertical="center", wrap_text=column_name in FINAL_WRAP_COLUMNS)
+            cell.border = THIN_BORDER
+            if column_name in FINAL_MONO_COLUMNS:
+                cell.font = MONO_FONT
+                cell.number_format = "@"
+
+        source_row = rows[row_number - 2]
+        if source_row.Final_Action == "CHANGE_TICKET":
+            rich_values = {
+                "Last - Title": _rich_change_value(source_row.Current_Last_Title, source_row.Recommended_Last_Title),
+                "First": _rich_change_value(source_row.Current_First, source_row.Recommended_First),
+                "NPI": _rich_change_value(source_row.Current_NPI, source_row.Recommended_NPI),
+                "CBcode": _rich_change_value(source_row.Current_CBCode, source_row.Recommended_CBCode),
+                "Comments": _rich_red_value(source_row.Recommended_Comments),
+            }
+            for column_name, rich_value in rich_values.items():
+                if column_name not in columns:
+                    continue
+                cell = worksheet.cell(row=row_number, column=columns[column_name])
+                cell.value = rich_value
+        elif source_row.Final_Action == "AWAITING_USAP" and "CBcode" in columns:
+            worksheet.cell(row=row_number, column=columns["CBcode"]).fill = PatternFill(fill_type="solid", fgColor=FILL_COLORS["yellow"])
+
+
 def _write_clean_sheet(writer: pd.ExcelWriter, sheet_name: str, rows: list[RowDetail], *, source_override: str | None = None) -> None:
     df, row_colors = _clean_frame(rows, source_override=source_override)
     safe_sheet_name = sheet_name[:31]
     df.to_excel(writer, index=False, sheet_name=safe_sheet_name)
     _style_clean_sheet(writer, safe_sheet_name, df, row_colors)
+
+
+def _write_final_delivery_sheet(writer: pd.ExcelWriter, sheet_name: str, rows: list[RowDetail]) -> None:
+    df = _final_delivery_frame(rows)
+    safe_sheet_name = sheet_name[:31]
+    df.to_excel(writer, index=False, sheet_name=safe_sheet_name)
+    _style_final_delivery_sheet(writer, safe_sheet_name, df, rows)
 
 
 def _summary_rows(rows: list[RowDetail]) -> list[dict[str, object]]:
@@ -342,7 +513,7 @@ def rows_to_workbook(rows: list[RowDetail], *, kind: str) -> bytes:
             _write_summary_sheet(writer, rows)
         elif kind == "numbers_ready":
             _write_summary_sheet(writer, rows)
-            _write_clean_sheet(writer, "Apply Ready", [row for row in rows if row.Apply_This == "YES"])
+            _write_final_delivery_sheet(writer, "Apply Ready", [row for row in rows if row.Apply_This == "YES"])
             grouped: dict[str, list[RowDetail]] = {}
             for row in rows:
                 region = str(row.Region or row.sheet_name or "Results")
@@ -350,7 +521,7 @@ def rows_to_workbook(rows: list[RowDetail], *, kind: str) -> bytes:
             if not grouped:
                 grouped["Results"] = []
             for sheet_name, group_rows in grouped.items():
-                _write_clean_sheet(writer, sheet_name, group_rows)
+                _write_final_delivery_sheet(writer, sheet_name, group_rows)
         elif kind == "full":
             df = pd.DataFrame([_export_row(row) for row in rows])
             df.to_excel(writer, index=False, sheet_name="full")

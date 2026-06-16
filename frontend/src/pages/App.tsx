@@ -103,6 +103,15 @@ function recommendedProvider(row: Pick<RowResult, "Recommended_Last_Title" | "Re
   return providerSummary(row.Recommended_Last_Title, row.Recommended_First);
 }
 
+function reviewNameTitle(row: RowResult) {
+  const current = providerSummary(row.Current_Last_Title, row.Current_First);
+  const recommended = recommendedProvider(row);
+  if (row.Final_Action === "CHANGE_TICKET" && recommended !== "No provider") {
+    return `${current} -> ${recommended}`;
+  }
+  return recommended !== "No provider" ? recommended : current;
+}
+
 function recommendedProviderFromMatch(match: SINLookupMatch) {
   return providerSummary(match.recommended.last_title, match.recommended.first);
 }
@@ -978,13 +987,12 @@ function ReviewSheet({
         ))}
       </div>
       <div className="max-h-[640px] overflow-auto rounded border border-line">
-        <table className="min-w-[1780px] table-fixed text-left text-xs">
+        <table className="min-w-[1520px] table-fixed text-left text-xs">
           <colgroup>
             <col style={{ width: 230 }} />
             <col style={{ width: 82 }} />
             <col style={{ width: 128 }} />
-            <col style={{ width: 230 }} />
-            <col style={{ width: 280 }} />
+            <col style={{ width: 360 }} />
             <col style={{ width: 128 }} />
             <col style={{ width: 260 }} />
             <col style={{ width: 220 }} />
@@ -996,8 +1004,7 @@ function ReviewSheet({
               <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">SIN</th>
               <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Type</th>
               <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Action</th>
-              <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Current Name</th>
-              <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Recommended Name</th>
+              <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Name</th>
               <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Recommended NPI</th>
               <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Recommended CBCode</th>
               <th className="border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55">Comments</th>
@@ -1016,11 +1023,18 @@ function ReviewSheet({
                 </td>
                 <td className="px-2 py-2 align-top whitespace-nowrap"><Badge>{roleLabel(row.Current_Type)}</Badge></td>
                 <td className="px-2 py-2 align-top whitespace-nowrap"><ActionBadge action={row.Final_Action} label={row.Quick_Action} /></td>
-                <td className="px-2 py-2 align-top" title={providerSummary(row.Current_Last_Title, row.Current_First)}>
-                  <div className="whitespace-normal break-words leading-4">{providerSummary(row.Current_Last_Title, row.Current_First)}</div>
-                </td>
-                <td className="px-2 py-2 align-top" title={recommendedProvider(row)}>
-                  <div className="whitespace-normal break-words leading-4">{recommendedProvider(row)}</div>
+                <td className="px-2 py-2 align-top" title={reviewNameTitle(row)}>
+                  {row.Final_Action === "CHANGE_TICKET" && recommendedProvider(row) !== "No provider" ? (
+                    <div className="whitespace-normal break-words leading-4">
+                      <span className="text-ink/55 line-through decoration-2">{providerSummary(row.Current_Last_Title, row.Current_First)}</span>
+                      <span className="mx-1 text-ink/35">→</span>
+                      <span className="font-semibold text-red-600">{recommendedProvider(row)}</span>
+                    </div>
+                  ) : (
+                    <div className="whitespace-normal break-words leading-4">
+                      {recommendedProvider(row) !== "No provider" ? recommendedProvider(row) : providerSummary(row.Current_Last_Title, row.Current_First)}
+                    </div>
+                  )}
                 </td>
                 <td className="px-2 py-2 align-top font-mono whitespace-nowrap"><span className="mr-2"><ColorDot color={row.Cell_Color_NPI} /></span>{row.Recommended_NPI}</td>
                 <td className="px-2 py-2 align-top font-mono whitespace-normal break-words"><span className="mr-2"><ColorDot color={row.Cell_Color_CBCode} /></span>{row.Recommended_CBCode}</td>
