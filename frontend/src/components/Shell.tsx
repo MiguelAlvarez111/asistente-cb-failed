@@ -9,14 +9,14 @@ type Props = {
 export function Shell({ children, onLogout, actions }: Props) {
   return (
     <div className="min-h-screen">
-      <header className="border-b border-line bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-3">
+      <header className="sticky top-0 z-30 border-b border-line bg-white/95 shadow-sm backdrop-blur">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-2.5">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded bg-pine text-white">
-              <ShieldCheck size={20} />
+            <div className="flex h-8 w-8 items-center justify-center rounded bg-pine text-white">
+              <ShieldCheck size={18} />
             </div>
             <div>
-              <h1 className="text-lg font-semibold">CB Failed Assistant</h1>
+              <h1 className="text-base font-semibold">CB Failed Assistant</h1>
               <p className="text-xs text-ink/60">Operational validation workspace</p>
             </div>
           </div>

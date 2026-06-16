@@ -360,6 +360,7 @@ export default function App() {
   const [reviewSearch, setReviewSearch] = useState("");
   const [sinInput, setSinInput] = useState("");
   const [lookupResult, setLookupResult] = useState<SINLookupResponse | null>(null);
+  const [recentSins, setRecentSins] = useState<string[]>([]);
   const [reviewRegion, setReviewRegion] = useState("");
   const [reviewSort, setReviewSort] = useState<{ key: ReviewSortKey | null; direction: SortDirection }>({ key: null, direction: "asc" });
   const [reviewColumnWidths, setReviewColumnWidths] = useState<Record<ReviewColumnKey, number>>(
@@ -439,7 +440,7 @@ export default function App() {
     [rows]
   );
   const regions = useMemo(() => [...new Set(sortedRows.map((row) => row.Region || row.sheet_name).filter(Boolean))], [sortedRows]);
-  const selectedRegion = reviewRegion || regions[0] || "";
+  const selectedRegion = reviewRegion;
   const detail = detailQuery.data ?? selectedRow;
   const summary = useMemo(() => {
     const count = (predicate: (row: RowResult) => boolean) => rows.filter(predicate).length;
@@ -451,6 +452,11 @@ export default function App() {
       manual: count((row) => row.Needs_Manual_Review)
     };
   }, [rows]);
+  const inspectionSummary = useMemo(() => ({
+    fileCount: inspection?.files.length ?? 0,
+    totalRows: sortedRows.length,
+    ready: summary.ready
+  }), [inspection?.files.length, sortedRows.length, summary.ready]);
   const reviewRows = useMemo(() => {
     const needle = reviewSearch.toLowerCase();
     const sinNeedle = normalizeSin(reviewSearch);
@@ -575,15 +581,24 @@ export default function App() {
     return <LoginPage onLogin={(secret) => loginMutation.mutateAsync(secret).then(() => undefined)} />;
   }
 
-  const runLookup = () => {
-    const cleaned = normalizeSin(sinInput);
+  const runLookupValue = (value: string) => {
+    const cleaned = normalizeSin(value);
     setSinInput(cleaned);
     if (!jobId) {
       showToast("Upload and process files first");
       setActiveSection("upload");
       return;
     }
-    if (cleaned) lookupMutation.mutate({ currentJobId: jobId, sin: cleaned });
+    if (cleaned) {
+      setRecentSins((current) => [cleaned, ...current.filter((item) => item !== cleaned)].slice(0, 5));
+      lookupMutation.mutate({ currentJobId: jobId, sin: cleaned });
+    }
+  };
+  const runLookup = () => runLookupValue(sinInput);
+  const clearSearch = () => {
+    setSinInput("");
+    setLookupResult(null);
+    window.setTimeout(() => searchInputRef.current?.focus(), 0);
   };
   const openRow = (rowId: string) => {
     const row = rows.find((item) => item.row_id === rowId);
@@ -615,7 +630,7 @@ export default function App() {
         ].map(([key, label]) => (
           <button
             key={key}
-            className={`rounded-full border px-4 py-2 text-sm font-medium ${activeSection === key ? "border-pine bg-pine text-white" : "border-line bg-white hover:bg-field"}`}
+            className={`rounded-full border px-4 py-2 text-sm font-medium transition ${activeSection === key ? "border-pine bg-pine text-white shadow-sm" : "border-line bg-white hover:bg-field"}`}
             onClick={() => setActiveSection(key as Section)}
           >
             {label}
@@ -639,8 +654,10 @@ export default function App() {
           sinInput={sinInput}
           setSinInput={setSinInput}
           runLookup={runLookup}
+          runLookupValue={runLookupValue}
           isSearching={lookupMutation.isPending}
           lookupResult={lookupResult}
+          recentSins={recentSins}
           summary={summary}
           rows={rows}
           jobStatus={jobQuery.data?.status ?? "No job"}
@@ -648,12 +665,14 @@ export default function App() {
           onCopy={copyText}
           onGoUpload={() => setActiveSection("upload")}
           onGoReview={() => setActiveSection("review")}
+          onClearSearch={clearSearch}
         />
       )}
 
       {activeSection === "review" && (
         <ReviewSheet
           rows={reviewRows}
+          allRows={sortedRows}
           totalRows={sortedRows.length}
           regions={regions}
           selectedRegion={selectedRegion}
@@ -680,10 +699,12 @@ export default function App() {
           onUploadFiles={(files) => uploadMutation.mutate(files)}
           onProcess={(uploadId) => jobMutation.mutate(uploadId)}
           onContinue={() => setActiveSection("search")}
+          onExport={() => setActiveSection("export")}
           onNewReport={() => void clearCurrentJob()}
           newReportDisabled={isJobBusy || clearJobMutation.isPending}
           jobStatus={jobQuery.data?.status}
           jobId={jobId}
+          summary={inspectionSummary}
           fileInputRef={fileInputRef}
         />
       )}
@@ -712,22 +733,27 @@ function MainSearch({
   sinInput,
   setSinInput,
   runLookup,
+  runLookupValue,
   isSearching,
   lookupResult,
+  recentSins,
   summary,
   rows,
   jobStatus,
   onOpenRow,
   onCopy,
   onGoUpload,
-  onGoReview
+  onGoReview,
+  onClearSearch
 }: {
   inputRef: React.RefObject<HTMLInputElement>;
   sinInput: string;
   setSinInput: (value: string) => void;
   runLookup: () => void;
+  runLookupValue: (value: string) => void;
   isSearching: boolean;
   lookupResult: SINLookupResponse | null;
+  recentSins: string[];
   summary: { ready: number; change: number; complete: number; awaiting: number; manual: number };
   rows: RowResult[];
   jobStatus: string;
@@ -735,19 +761,26 @@ function MainSearch({
   onCopy: (label: string, value: string, rowId?: string) => void;
   onGoUpload: () => void;
   onGoReview: () => void;
+  onClearSearch: () => void;
 }) {
+  const hasResult = Boolean(lookupResult);
   return (
     <section className="mx-auto max-w-6xl space-y-6">
-      <div className="rounded border border-line bg-white px-6 py-8 text-center shadow-sm">
-        <p className="text-sm font-medium uppercase tracking-wide text-pine">CB Failed Assistant</p>
-        <h2 className="mt-2 text-3xl font-semibold">Search a SIN to see exactly what to apply.</h2>
-        <p className="mx-auto mt-2 max-w-2xl text-sm text-ink/65">
-          Copy a SIN from Numbers, paste it here, and the assistant will show the correction.
-        </p>
-        <div className="mx-auto mt-6 flex max-w-4xl flex-col gap-3 md:flex-row">
+      <div className={`${hasResult ? "sticky top-[73px] z-20 rounded border border-line bg-white/95 px-4 py-3 text-left shadow-sm backdrop-blur" : "rounded border border-line bg-white px-6 py-8 text-center shadow-sm"}`}>
+        {!hasResult && (
+          <>
+            <p className="text-sm font-medium uppercase tracking-wide text-pine">CB Failed Assistant</p>
+            <h2 className="mt-2 text-3xl font-semibold">Search a SIN to see exactly what to apply.</h2>
+            <p className="mx-auto mt-2 max-w-2xl text-sm text-ink/65">
+              Copy a SIN from Numbers, paste it here, and the assistant will show the correction.
+            </p>
+          </>
+        )}
+        <div className={`${hasResult ? "flex flex-col gap-2 md:flex-row md:items-center" : "mx-auto mt-6 flex max-w-4xl flex-col gap-3 md:flex-row"}`}>
+          {hasResult && <p className="text-xs font-semibold uppercase tracking-wide text-pine md:w-32">Find by SIN</p>}
           <input
             ref={inputRef}
-            className="min-h-14 flex-1 rounded border border-line px-4 text-xl outline-none focus:border-pine focus:ring-2 focus:ring-pine/15"
+            className={`${hasResult ? "min-h-11 text-base" : "min-h-14 text-xl"} flex-1 rounded border border-line px-4 outline-none transition focus:border-pine focus:ring-2 focus:ring-pine/15`}
             placeholder="Paste SIN and press Enter"
             value={sinInput}
             onChange={(event) => setSinInput(event.target.value)}
@@ -755,11 +788,32 @@ function MainSearch({
               if (event.key === "Enter") runLookup();
             }}
           />
-          <button className="rounded bg-pine px-7 py-3 text-lg font-semibold text-white hover:bg-pine/90" onClick={runLookup}>
-            {isSearching ? "Searching..." : "Search"}
+          <button className={`${hasResult ? "px-4 py-2 text-sm" : "px-7 py-3 text-lg"} rounded bg-pine font-semibold text-white transition hover:bg-pine/90`} onClick={runLookup}>
+            {isSearching ? "Searching..." : "Find correction"}
           </button>
+          {hasResult && (
+            <button className="rounded border border-line px-3 py-2 text-sm font-medium transition hover:bg-field" onClick={onClearSearch}>
+              Clear
+            </button>
+          )}
         </div>
-        <p className="mt-3 text-xs text-ink/50">Tip: Cmd/Ctrl + K focuses search.</p>
+        {!hasResult && <p className="mt-3 text-xs text-ink/50">Tip: Cmd/Ctrl + K focuses search.</p>}
+        {!hasResult && recentSins.length > 0 && (
+          <div className="mx-auto mt-4 flex max-w-4xl flex-wrap items-center justify-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-ink/45">Recent SINs</span>
+            {recentSins.map((sin) => (
+              <button
+                key={sin}
+                className="rounded-full border border-line px-3 py-1.5 font-mono text-xs transition hover:bg-field"
+                onClick={() => {
+                  runLookupValue(sin);
+                }}
+              >
+                {sin}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {!lookupResult && (
@@ -893,7 +947,7 @@ function SinResultCard({
   const nextProvider = recommendedProviderFromMatch(match);
   const noun = roleNoun(match.role);
   return (
-    <article className="rounded border border-line bg-white p-5 shadow-sm transition-opacity">
+    <article className="rounded border border-line bg-white p-4 shadow-sm transition-opacity">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-xs uppercase tracking-wide text-ink/50">SIN</p>
@@ -907,15 +961,15 @@ function SinResultCard({
         </div>
       </div>
 
-      <section className="mt-4 grid items-center gap-3 rounded border border-line bg-field/40 p-4 md:grid-cols-[1fr_auto_1fr]">
+      <section className="mt-4 grid items-center gap-3 rounded border border-line bg-field/40 p-3 md:grid-cols-[1fr_auto_1fr]">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-ink/45">Current {noun}</p>
-          <p className="mt-1 break-words text-xl font-semibold">{currentProvider}</p>
+          <p className="mt-1 break-words text-lg font-semibold">{currentProvider}</p>
         </div>
         <div className="text-2xl font-semibold text-coral md:px-2" aria-hidden="true">→</div>
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-ink/45">Recommended {noun}</p>
-          <p className="mt-1 break-words text-xl font-semibold">{nextProvider}</p>
+          <p className="mt-1 break-words text-lg font-semibold">{nextProvider}</p>
         </div>
       </section>
 
@@ -949,7 +1003,7 @@ function CorrectionComparisonTable({ match, row }: { match: SINLookupMatch; row?
 
   return (
     <section className="mt-4 rounded border border-line bg-white">
-      <div className="border-b border-line px-4 py-3">
+      <div className="border-b border-line px-3 py-2">
         <h4 className="text-sm font-semibold uppercase tracking-wide text-ink/55">Correction Preview</h4>
       </div>
       <div className="overflow-x-auto">
@@ -977,7 +1031,7 @@ function CorrectionComparisonTable({ match, row }: { match: SINLookupMatch; row?
             <tr>
               <th className="bg-field/45 px-3 py-3 text-xs font-semibold uppercase tracking-wide text-ink/55">Current</th>
               {columns.map((column) => (
-                <td key={column.key} className="px-3 py-3 align-top">
+                <td key={column.key} className="px-3 py-2 align-top">
                   <span className="select-text break-words font-medium text-ink/80">{currentDisplay(column.current)}</span>
                 </td>
               ))}
@@ -985,7 +1039,7 @@ function CorrectionComparisonTable({ match, row }: { match: SINLookupMatch; row?
             <tr>
               <th className="bg-field/45 px-3 py-3 text-xs font-semibold uppercase tracking-wide text-ink/55">Recommended</th>
               {columns.map((column) => (
-                <td key={column.key} className="px-2 py-2 align-top">
+                <td key={column.key} className="px-2 py-1.5 align-top">
                   <span className={`block rounded border px-2 py-1.5 font-semibold select-text ${correctionCellClass(column.color)}`}>
                     {recommendedDisplay(column.recommended)}
                   </span>
@@ -1090,6 +1144,7 @@ function NoMatchState({ onGoUpload, onGoReview }: { onGoUpload: () => void; onGo
 
 function ReviewSheet({
   rows,
+  allRows,
   totalRows,
   regions,
   selectedRegion,
@@ -1105,6 +1160,7 @@ function ReviewSheet({
   onOpenRow
 }: {
   rows: RowResult[];
+  allRows: RowResult[];
   totalRows: number;
   regions: string[];
   selectedRegion: string;
@@ -1119,6 +1175,29 @@ function ReviewSheet({
   setColumnWidths: React.Dispatch<React.SetStateAction<Record<ReviewColumnKey, number>>>;
   onOpenRow: (row: RowResult) => void;
 }) {
+  const rowMatchesFilter = useCallback((row: RowResult, filter: ReviewFilter) => (
+    filter === "READY" ? row.Apply_This === "YES" : row.Final_Action === filter
+  ), []);
+  const rowRegion = useCallback((row: RowResult) => row.Region || row.sheet_name, []);
+  const currentRegionRows = useMemo(
+    () => allRows.filter((row) => !selectedRegion || rowRegion(row) === selectedRegion),
+    [allRows, rowRegion, selectedRegion]
+  );
+  const filterCounts = useMemo(
+    () => Object.fromEntries(REVIEW_FILTERS.map((filter) => [filter.value, currentRegionRows.filter((row) => rowMatchesFilter(row, filter.value)).length])) as Record<ReviewFilter, number>,
+    [currentRegionRows, rowMatchesFilter]
+  );
+  const regionCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const row of allRows) {
+      if (rowMatchesFilter(row, reviewFilter)) {
+        const region = rowRegion(row);
+        counts[region] = (counts[region] ?? 0) + 1;
+      }
+    }
+    return counts;
+  }, [allRows, reviewFilter, rowMatchesFilter, rowRegion]);
+  const allRegionCount = useMemo(() => allRows.filter((row) => rowMatchesFilter(row, reviewFilter)).length, [allRows, reviewFilter, rowMatchesFilter]);
   const toggleSort = (key: ReviewSortKey) => {
     setReviewSort(reviewSort.key === key ? { key, direction: reviewSort.direction === "asc" ? "desc" : "asc" } : { key, direction: "asc" });
   };
@@ -1162,13 +1241,19 @@ function ReviewSheet({
         </div>
       </div>
       <div className="mb-3 flex flex-wrap gap-2">
+        <button
+          className={`rounded-full border px-3 py-1.5 text-sm transition ${!selectedRegion ? "border-pine bg-pine text-white" : "border-line hover:bg-field"}`}
+          onClick={() => setSelectedRegion("")}
+        >
+          All <span className="ml-1 text-xs opacity-75">{allRegionCount}</span>
+        </button>
         {regions.map((region) => (
           <button
             key={region}
-            className={`rounded-full border px-3 py-1.5 text-sm ${selectedRegion === region ? "border-pine bg-pine text-white" : "border-line hover:bg-field"}`}
+            className={`rounded-full border px-3 py-1.5 text-sm transition ${selectedRegion === region ? "border-pine bg-pine text-white" : "border-line hover:bg-field"}`}
             onClick={() => setSelectedRegion(region)}
           >
-            {region}
+            {region} <span className="ml-1 text-xs opacity-75">{regionCounts[region] ?? 0}</span>
           </button>
         ))}
       </div>
@@ -1179,7 +1264,7 @@ function ReviewSheet({
             className={`rounded border px-2 py-2 text-sm ${reviewFilter === filter.value ? "border-pine bg-pine text-white" : "border-line hover:bg-field"}`}
             onClick={() => setReviewFilter(filter.value)}
           >
-            {filter.label}
+            {filter.label} <span className="ml-1 text-xs opacity-75">{filterCounts[filter.value] ?? 0}</span>
           </button>
         ))}
       </div>
@@ -1190,21 +1275,21 @@ function ReviewSheet({
               <col key={column.key} style={{ width: columnWidths[column.key] ?? column.width }} />
             ))}
           </colgroup>
-          <thead className="sticky top-0 z-10 bg-field">
+          <thead className="sticky top-0 z-10 bg-white shadow-sm">
             <tr>
               {REVIEW_COLUMNS.map((column) => (
                 <th
                   key={column.key}
-                  className="relative border-b border-line px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/55"
+                  className="group relative border-b border-line bg-field px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-ink/60"
                 >
                   {column.sortable ? (
                     <button
-                      className="flex w-full items-center gap-1 text-left uppercase tracking-wide hover:text-ink focus:outline-none focus:ring-2 focus:ring-pine/20"
+                      className="flex w-full items-center gap-1 text-left uppercase tracking-wide transition hover:text-ink focus:outline-none focus:ring-2 focus:ring-pine/20"
                       onClick={() => toggleSort(column.key as ReviewSortKey)}
                       type="button"
                     >
                       <span>{column.label}</span>
-                      <span className="text-[10px] text-ink/45">
+                      <span className={`text-[10px] ${reviewSort.key === column.key ? "text-pine" : "text-ink/35"}`}>
                         {reviewSort.key === column.key ? (reviewSort.direction === "asc" ? "▲" : "▼") : "↕"}
                       </span>
                     </button>
@@ -1213,7 +1298,7 @@ function ReviewSheet({
                   )}
                   <span
                     aria-hidden="true"
-                    className="absolute right-0 top-0 h-full w-1 cursor-col-resize border-r border-transparent hover:border-pine/50"
+                    className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize border-r border-transparent bg-transparent transition group-hover:border-pine/60 group-hover:bg-pine/10"
                     onMouseDown={(event) => startResize(event, column.key)}
                   />
                 </th>
@@ -1221,6 +1306,13 @@ function ReviewSheet({
             </tr>
           </thead>
           <tbody className="divide-y divide-line/80">
+            {rows.length === 0 && (
+              <tr>
+                <td className="px-4 py-8 text-center text-sm text-ink/60" colSpan={REVIEW_COLUMNS.length}>
+                  No {REVIEW_FILTERS.find((filter) => filter.value === reviewFilter)?.label.toLowerCase()} rows{selectedRegion ? ` in ${selectedRegion}` : ""}. Try All, another region, or a different filter.
+                </td>
+              </tr>
+            )}
             {rows.map((row) => (
               <tr
                 key={row.row_id}
@@ -1266,10 +1358,12 @@ function UploadPanel({
   onUploadFiles,
   onProcess,
   onContinue,
+  onExport,
   onNewReport,
   newReportDisabled,
   jobStatus,
   jobId,
+  summary,
   fileInputRef
 }: {
   inspection: UploadInspectionResponse | null;
@@ -1280,12 +1374,21 @@ function UploadPanel({
   onUploadFiles: (files: File[]) => void;
   onProcess: (uploadId: string) => void;
   onContinue: () => void;
+  onExport: () => void;
   onNewReport: () => void;
   newReportDisabled: boolean;
   jobStatus?: string;
   jobId: string | null;
+  summary: { fileCount: number; totalRows: number; ready: number };
   fileInputRef: React.RefObject<HTMLInputElement>;
 }) {
+  const step = processPending ? "process" : inspection ? "confirm" : uploadPending ? "inspect" : "upload";
+  const steps = [
+    { key: "upload", label: "Upload files" },
+    { key: "inspect", label: "Inspect sheets" },
+    { key: "confirm", label: "Confirm types" },
+    { key: "process", label: "Process" }
+  ];
   return (
     <section className="mx-auto max-w-5xl space-y-5">
       {jobId && (
@@ -1293,11 +1396,19 @@ function UploadPanel({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-ink/50">Current job</p>
-              <p className="text-sm text-ink/70">{jobStatus ?? "Loading"}</p>
+              <p className="text-sm font-semibold text-ink">{jobStatus ?? "Loading"}</p>
+              <div className="mt-2 flex flex-wrap gap-2 text-xs text-ink/60">
+                {summary.fileCount > 0 && <span className="rounded-full bg-field px-2 py-1">{summary.fileCount} files inspected</span>}
+                {summary.totalRows > 0 && <span className="rounded-full bg-field px-2 py-1">{summary.totalRows} rows processed</span>}
+                {summary.ready > 0 && <span className="rounded-full bg-green-50 px-2 py-1 font-semibold text-green-800">{summary.ready} ready</span>}
+              </div>
             </div>
             <div className="flex flex-wrap gap-2">
               <button className="rounded bg-pine px-3 py-2 text-sm font-semibold text-white hover:bg-pine/90" onClick={onContinue}>
                 Continue working
+              </button>
+              <button className="rounded border border-line px-3 py-2 text-sm font-medium hover:bg-field" onClick={onExport}>
+                Export
               </button>
               <button
                 className="rounded border border-line px-3 py-2 text-sm font-medium hover:bg-field disabled:cursor-not-allowed disabled:opacity-50"
@@ -1311,7 +1422,18 @@ function UploadPanel({
         </div>
       )}
       <div className="rounded border border-line bg-white p-5">
-        <h2 className="mb-3 flex items-center gap-2 text-xl font-semibold"><FileCheck2 size={20} /> Upload</h2>
+        <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold"><FileCheck2 size={20} /> Upload</h2>
+        <div className="mb-4 grid gap-2 md:grid-cols-4">
+          {steps.map((item, index) => {
+            const active = item.key === step;
+            const complete = steps.findIndex((candidate) => candidate.key === step) > index;
+            return (
+              <div key={item.key} className={`rounded border px-3 py-2 text-sm ${active ? "border-pine bg-pine text-white" : complete ? "border-green-200 bg-green-50 text-green-800" : "border-line bg-field/40 text-ink/60"}`}>
+                <span className="mr-2 font-semibold">{index + 1}</span>{item.label}
+              </div>
+            );
+          })}
+        </div>
         <input
           ref={fileInputRef}
           type="file"
@@ -1323,7 +1445,7 @@ function UploadPanel({
             if (files.length) onUploadFiles(files);
           }}
         />
-        {uploadPending && <p className="text-sm text-ink/60">Inspecting selected files...</p>}
+        {uploadPending && <p className="text-sm text-ink/60">Inspecting selected files and correction formatting...</p>}
         {jobStatus && <p className="text-sm text-ink/60">Current job: {jobStatus}</p>}
       </div>
 
@@ -1347,16 +1469,23 @@ function UploadPanel({
               const override = fileOverrides[file.file_id] ?? file.kind;
               const correctionSignal = file.kind === "CORRECTIONS" && file.warnings.some((warning) => warning.toLowerCase().includes("correction signals"));
               const details = [...file.warnings, ...file.missing_columns.map((col) => `Missing ${col}`)];
+              const tone: BadgeTone = file.kind === "UNKNOWN" ? "warn" : file.kind === "CORRECTIONS" ? "good" : "neutral";
               return (
-                <div key={file.file_id} className="rounded border border-line p-3">
+                <div key={file.file_id} className="rounded border border-line bg-white p-3 shadow-sm transition hover:border-pine/30">
                   <div className="mb-2 flex items-start justify-between gap-3">
-                    <div className="min-w-0">
+                    <div className="flex min-w-0 gap-3">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded bg-field text-pine">
+                        <FileCheck2 size={18} />
+                      </div>
+                      <div className="min-w-0">
                       <h4 className="truncate font-semibold">{file.filename}</h4>
                       <p className="text-sm text-ink/60">Detected: {FILE_KIND_LABELS[file.kind]}</p>
+                      </div>
                     </div>
-                    <Badge tone={file.kind === "UNKNOWN" ? "warn" : "neutral"}>{FILE_KIND_LABELS[override]}</Badge>
+                    <Badge tone={tone}>{FILE_KIND_LABELS[override]}</Badge>
                   </div>
                   <p className="text-sm text-ink/65">{file.row_count} rows · {file.column_count} columns</p>
+                  {details.length > 0 && <p className="mt-1 text-xs text-ink/50">{details.length} detection detail{details.length === 1 ? "" : "s"}</p>}
                   {correctionSignal && <p className="mt-2 text-sm text-pine">Detected as Corrections because correction-style fields or values were found.</p>}
                   {(file.kind === "UNKNOWN" || override === "IGNORE") && <p className="mt-2 text-sm text-gold">Please confirm file type.</p>}
                   <label className="mt-3 block text-xs uppercase text-ink/50">Use as</label>
@@ -1390,6 +1519,7 @@ function UploadPanel({
 }
 
 function ExportPanel({ jobId }: { jobId: string | null }) {
+  const [downloaded, setDownloaded] = useState(false);
   const advancedExports: Array<{ kind: ExportKind; label: string }> = [
     { kind: "full", label: "Full processed data" },
     { kind: "usap", label: "USAP awaiting rows" },
@@ -1404,16 +1534,25 @@ function ExportPanel({ jobId }: { jobId: string | null }) {
       <a
         className="mt-5 flex items-center justify-center gap-2 rounded bg-pine px-5 py-4 text-lg font-semibold text-white hover:bg-pine/90"
         href={jobId ? exportUrl(jobId, "numbers_ready") : "#"}
+        onClick={() => {
+          if (jobId) setDownloaded(true);
+        }}
       >
         <Download size={20} /> Download Numbers-ready workbook
       </a>
       <p className="mt-2 text-sm text-ink/60">Includes region tabs, recommended corrections, and color guidance.</p>
+      {downloaded && (
+        <div className="mt-3 rounded border border-green-200 bg-green-50 px-3 py-2 text-sm font-medium text-green-800">
+          Workbook ready for Numbers/Excel.
+        </div>
+      )}
       <details className="mt-5 rounded border border-line p-4">
         <summary className="cursor-pointer text-sm font-semibold">Advanced exports</summary>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           {advancedExports.map(({ kind, label }) => (
             <a key={kind} className="rounded border border-line px-3 py-2 text-sm hover:bg-field" href={jobId ? exportUrl(jobId, kind) : "#"}>
               {label}
+              {kind === "full" && <span className="mt-1 block text-xs text-ink/45">For audit/debug only</span>}
             </a>
           ))}
         </div>
