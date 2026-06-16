@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, FileCheck2, Play, Search, X } from "lucide-react";
+import { Download, FileCheck2, Play, Search, UploadCloud, X } from "lucide-react";
 import {
   createJob,
   deleteJob,
@@ -1473,6 +1473,7 @@ function UploadPanel({
   summary: { fileCount: number; totalRows: number; ready: number };
   fileInputRef: React.RefObject<HTMLInputElement>;
 }) {
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const step = isProcessing ? "process" : inspection ? "confirm" : uploadPending ? "inspect" : "upload";
   const steps = [
     { key: "upload", label: "Upload files" },
@@ -1480,6 +1481,10 @@ function UploadPanel({
     { key: "confirm", label: "Confirm types" },
     { key: "process", label: "Process" }
   ];
+  const handleFiles = (fileList: FileList | File[]) => {
+    const files = Array.from(fileList);
+    if (files.length && !uploadPending && !isProcessing) onUploadFiles(files);
+  };
   return (
     <section className="mx-auto max-w-5xl space-y-5">
       {jobId && (
@@ -1525,17 +1530,71 @@ function UploadPanel({
             );
           })}
         </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept=".xlsx,.xls,.txt"
-          className="mb-3 w-full rounded border border-line p-2"
-          onChange={(event) => {
-            const files = Array.from(event.target.files ?? []);
-            if (files.length) onUploadFiles(files);
+        <label
+          className={`group relative mb-3 overflow-hidden rounded-lg border-2 border-dashed p-6 text-center transition ${
+            isDraggingFiles
+              ? "border-pine bg-green-50 shadow-md ring-4 ring-pine/10"
+              : "border-line bg-field/40 hover:border-pine/45 hover:bg-white"
+          } ${uploadPending || isProcessing ? "pointer-events-none opacity-75" : "cursor-pointer"}`}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              fileInputRef.current?.click();
+            }
           }}
-        />
+          onDragEnter={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setIsDraggingFiles(true);
+          }}
+          onDragOver={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setIsDraggingFiles(true);
+          }}
+          onDragLeave={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.currentTarget === event.target) setIsDraggingFiles(false);
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setIsDraggingFiles(false);
+            handleFiles(event.dataTransfer.files);
+          }}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".xlsx,.xls,.txt"
+            className="sr-only"
+            onChange={(event) => {
+              handleFiles(event.target.files ?? []);
+              event.currentTarget.value = "";
+            }}
+          />
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-white text-pine shadow-sm ring-1 ring-line transition group-hover:scale-105">
+            <UploadCloud size={28} />
+          </div>
+          <h3 className="mt-4 text-lg font-semibold">
+            {uploadPending ? "Inspecting files..." : isDraggingFiles ? "Drop files to inspect" : "Drag files here"}
+          </h3>
+          <p className="mx-auto mt-1 max-w-xl text-sm text-ink/60">
+            Drop original reports, correction files, and dictionaries together. You can also click to browse.
+          </p>
+          <div className="mt-4 flex flex-wrap justify-center gap-2 text-xs font-medium text-ink/60">
+            <span className="rounded-full border border-line bg-white px-2.5 py-1">Excel .xlsx / .xls</span>
+            <span className="rounded-full border border-line bg-white px-2.5 py-1">Dictionary .txt</span>
+            <span className="rounded-full border border-line bg-white px-2.5 py-1">Multiple files</span>
+          </div>
+          <span className="mt-5 inline-flex rounded bg-pine px-4 py-2 text-sm font-semibold text-white shadow-sm transition group-hover:bg-pine/90">
+            Choose files
+          </span>
+        </label>
         {uploadPending && <p className="text-sm text-ink/60">Inspecting selected files and correction formatting...</p>}
         {jobStatus && <p className="text-sm text-ink/60">Current job: {jobStatus}</p>}
       </div>
