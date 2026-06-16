@@ -21,10 +21,19 @@ export async function session() {
   return data;
 }
 
-export async function inspectUploads(files: File[]) {
+export async function inspectUploads(files: File[], onProgress?: (percent: number) => void) {
   const form = new FormData();
   files.forEach((file) => form.append("files", file));
-  const { data } = await api.post<UploadInspectionResponse>("/api/uploads/inspect", form);
+  const { data } = await api.post<UploadInspectionResponse>("/api/uploads/inspect", form, {
+    onUploadProgress: (event) => {
+      if (!onProgress) return;
+      if (event.total) {
+        onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      } else if (event.loaded > 0) {
+        onProgress(50);
+      }
+    }
+  });
   return data;
 }
 

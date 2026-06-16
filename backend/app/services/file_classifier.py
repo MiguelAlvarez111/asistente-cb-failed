@@ -98,6 +98,18 @@ def _cell_has_correction_format(cell: Cell) -> bool:
     return False
 
 
+def _worksheet_has_correction_formatting(worksheet) -> bool:
+    header = [normalize_column_name(cell.value) for cell in worksheet[1]]
+    watched_indexes = [index + 1 for index, column in enumerate(header) if column in FORMAT_COLUMNS]
+    if not watched_indexes:
+        return False
+    for row in worksheet.iter_rows(min_row=2):
+        for column_index in watched_indexes:
+            if column_index <= len(row) and _cell_has_correction_format(row[column_index - 1]):
+                return True
+    return False
+
+
 def _sheet_has_correction_formatting(path: Path, sheet_name: str) -> bool:
     try:
         workbook = load_workbook(path, read_only=False, data_only=True)
@@ -105,20 +117,12 @@ def _sheet_has_correction_formatting(path: Path, sheet_name: str) -> bool:
     except Exception:
         return False
     try:
-        header = [normalize_column_name(cell.value) for cell in worksheet[1]]
-        watched_indexes = [index + 1 for index, column in enumerate(header) if column in FORMAT_COLUMNS]
-        if not watched_indexes:
-            return False
-        for row in worksheet.iter_rows(min_row=2):
-            for column_index in watched_indexes:
-                if column_index <= len(row) and _cell_has_correction_format(row[column_index - 1]):
-                    return True
-        return False
+        return _worksheet_has_correction_formatting(worksheet)
     finally:
         workbook.close()
 
 
-def has_correction_signals(df: pd.DataFrame, *, path: Path | None = None, sheet_name: str | None = None) -> bool:
+def has_correction_signals(df: pd.DataFrame, *, path: Path | None = None, sheet_name: str | None = None, worksheet=None) -> bool:
     columns = set(df.columns)
     if "npi" in columns and _series_has_text(df["npi"], ["chg to"]):
         return True
@@ -133,6 +137,8 @@ def has_correction_signals(df: pd.DataFrame, *, path: Path | None = None, sheet_
         return True
     if _has_non_empty_values(df, {"comments", "source"}):
         return True
+    if worksheet is not None and _worksheet_has_correction_formatting(worksheet):
+        return True
     if path and sheet_name and _sheet_has_correction_formatting(path, sheet_name):
         return True
     return False
@@ -140,6 +146,8 @@ def has_correction_signals(df: pd.DataFrame, *, path: Path | None = None, sheet_
 
 def _inspect_excel(path: Path) -> FileInspection | None:
     workbook = pd.ExcelFile(path)
+    formatting_workbook = None
+    formatting_workbook_loaded = False
     report_columns: set[str] = set()
     correction_columns: set[str] = set()
     report_rows = 0
@@ -149,26 +157,39 @@ def _inspect_excel(path: Path) -> FileInspection | None:
     first_df: pd.DataFrame | None = None
     correction_signal_warnings: list[str] = []
 
-    for sheet_name in workbook.sheet_names:
-        df = normalize_dataframe(pd.read_excel(path, sheet_name=sheet_name, dtype=str).fillna(""))
-        if first_df is None:
-            first_df = df
-        columns = set(df.columns)
-        sheet_has_report_columns = REPORT_REQUIRED.issubset(columns)
-        sheet_has_correction_signals = has_correction_signals(df, path=path, sheet_name=sheet_name)
-        if sheet_has_correction_signals:
-            correction_rows += len(df.index)
-            correction_columns.update(columns)
-            correction_sheets.append(sheet_name)
-            if sheet_has_report_columns:
+    try:
+        for sheet_name in workbook.sheet_names:
+            df = normalize_dataframe(pd.read_excel(path, sheet_name=sheet_name, dtype=str).fillna(""))
+            if first_df is None:
+                first_df = df
+            columns = set(df.columns)
+            sheet_has_report_columns = REPORT_REQUIRED.issubset(columns)
+            sheet_has_correction_signals = has_correction_signals(df)
+            if not sheet_has_correction_signals and path.suffix.lower() == ".xlsx":
+                if not formatting_workbook_loaded:
+                    formatting_workbook_loaded = True
+                    try:
+                        formatting_workbook = load_workbook(path, read_only=False, data_only=True)
+                    except Exception:
+                        formatting_workbook = None
+                worksheet = formatting_workbook[sheet_name] if formatting_workbook is not None and sheet_name in formatting_workbook.sheetnames else None
+                sheet_has_correction_signals = has_correction_signals(df, worksheet=worksheet)
+            if sheet_has_correction_signals:
+                correction_rows += len(df.index)
+                correction_columns.update(columns)
+                correction_sheets.append(sheet_name)
+                if sheet_has_report_columns:
+                    report_rows += len(df.index)
+                    report_columns.update(columns)
+                    report_sheets.append(sheet_name)
+                correction_signal_warnings.append(f"Correction signals detected in sheet: {sheet_name}")
+            elif sheet_has_report_columns:
                 report_rows += len(df.index)
                 report_columns.update(columns)
                 report_sheets.append(sheet_name)
-            correction_signal_warnings.append(f"Correction signals detected in sheet: {sheet_name}")
-        elif sheet_has_report_columns:
-            report_rows += len(df.index)
-            report_columns.update(columns)
-            report_sheets.append(sheet_name)
+    finally:
+        if formatting_workbook is not None:
+            formatting_workbook.close()
 
     if correction_sheets:
         return FileInspection(

@@ -17,3 +17,18 @@ select {
   font: inherit;
 }
 
+@keyframes progress-sweep {
+  0% {
+    transform: translateX(-120%);
+  }
+  50% {
+    transform: translateX(70%);
+  }
+  100% {
+    transform: translateX(220%);
+  }
+}
+
+.progress-sweep {
+  animation: progress-sweep 1.4s ease-in-out infinite;
+}

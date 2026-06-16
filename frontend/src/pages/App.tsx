@@ -26,6 +26,8 @@ type ReviewSortKey = "sin" | "type" | "action" | "name" | "npi" | "cbcode" | "co
 type SortDirection = "asc" | "desc";
 type ReviewColumnKey = ReviewSortKey | "details";
 type BadgeTone = "neutral" | "good" | "warn" | "danger";
+type UploadProgressState = { phase: "uploading" | "inspecting"; percent: number; startedAt: number };
+type ProgressDisplayState = { status: string; progress: number; message: string; startedAt?: number; indeterminate?: boolean };
 
 const REVIEW_COLUMNS: Array<{ key: ReviewColumnKey; label: string; width: number; sortable?: boolean }> = [
   { key: "sin", label: "SIN", width: 230, sortable: true },
@@ -363,6 +365,7 @@ export default function App() {
   const [reviewColumnWidths, setReviewColumnWidths] = useState<Record<ReviewColumnKey, number>>(
     () => Object.fromEntries(REVIEW_COLUMNS.map((column) => [column.key, column.width])) as Record<ReviewColumnKey, number>
   );
+  const [uploadProgress, setUploadProgress] = useState<UploadProgressState | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   const sessionQuery = useQuery({ queryKey: ["session"], queryFn: session });
@@ -371,11 +374,24 @@ export default function App() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["session"] })
   });
   const uploadMutation = useMutation({
-    mutationFn: inspectUploads,
+    mutationFn: (files: File[]) => inspectUploads(files, (percent) => {
+      setUploadProgress((current) => ({
+        phase: percent >= 100 ? "inspecting" : "uploading",
+        percent,
+        startedAt: current?.startedAt ?? Date.now()
+      }));
+    }),
+    onMutate: () => {
+      setInspection(null);
+      setUploadProgress({ phase: "uploading", percent: 0, startedAt: Date.now() });
+    },
     onSuccess: (data) => {
       setInspection(data);
       setActiveSection("upload");
       setFileOverrides(Object.fromEntries(data.files.map((file) => [file.file_id, file.kind === "UNKNOWN" ? "IGNORE" : file.kind])));
+    },
+    onSettled: () => {
+      setUploadProgress(null);
     }
   });
   const jobMutation = useMutation({
@@ -464,8 +480,17 @@ export default function App() {
       return reviewSort.direction === "asc" ? comparison : -comparison;
     });
   }, [reviewFilter, reviewSearch, reviewSort, selectedRegion, sortedRows]);
-  const progressState = uploadMutation.isPending
-    ? { status: "INSPECTING", progress: 18, message: "Inspecting files..." }
+  const progressState: ProgressDisplayState | null = uploadMutation.isPending
+    ? {
+        status: uploadProgress?.phase === "inspecting" ? "INSPECTING" : "UPLOADING",
+        progress: uploadProgress?.percent ?? 0,
+        message:
+          uploadProgress?.phase === "inspecting"
+            ? "Inspecting Excel sheets and correction formatting..."
+            : "Uploading selected files...",
+        startedAt: uploadProgress?.startedAt,
+        indeterminate: uploadProgress?.phase === "inspecting"
+      }
     : jobMutation.isPending
       ? { status: "QUEUED", progress: 5, message: "Preparing files..." }
       : jobQuery.data && (jobQuery.data.status !== "COMPLETED" || resultsQuery.isFetching)
@@ -598,7 +623,15 @@ export default function App() {
         ))}
       </nav>
 
-      {progressState && <ProcessingProgress status={progressState.status} progress={progressState.progress} message={progressState.message} />}
+      {progressState && (
+        <ProcessingProgress
+          status={progressState.status}
+          progress={progressState.progress}
+          message={progressState.message}
+          startedAt={progressState.startedAt}
+          indeterminate={progressState.indeterminate}
+        />
+      )}
 
       {activeSection === "search" && (
         <MainSearch
@@ -778,15 +811,39 @@ function SummaryCards({ summary, jobStatus }: { summary: { ready: number; change
   );
 }
 
-function ProcessingProgress({ status, progress, message }: { status: string; progress: number; message: string }) {
+function ProcessingProgress({
+  status,
+  progress,
+  message,
+  startedAt,
+  indeterminate
+}: {
+  status: string;
+  progress: number;
+  message: string;
+  startedAt?: number;
+  indeterminate?: boolean;
+}) {
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    if (!startedAt || status === "COMPLETED" || status === "FAILED" || status === "EXPIRED") return undefined;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [startedAt, status]);
+
   const rawProgress = Number.isFinite(progress) ? progress : 0;
   const percent = Math.max(0, Math.min(100, Math.round(rawProgress <= 1 ? rawProgress * 100 : rawProgress)));
-  const visiblePercent = status === "QUEUED" ? Math.max(percent, 5) : status === "INSPECTING" ? Math.max(percent, 18) : percent;
+  const visiblePercent = status === "QUEUED" ? Math.max(percent, 5) : percent;
   const isFailed = status === "FAILED" || status === "EXPIRED";
   const isCompleted = status === "COMPLETED";
+  const elapsedSeconds = startedAt ? Math.max(0, Math.floor((now - startedAt) / 1000)) : 0;
+  const elapsedLabel = elapsedSeconds >= 5 ? ` · ${elapsedSeconds}s elapsed` : "";
   const title =
-    status === "INSPECTING"
-      ? "Uploading / Inspecting files"
+    status === "UPLOADING"
+      ? "Uploading files..."
+      : status === "INSPECTING"
+        ? "Inspecting files..."
       : status === "QUEUED"
         ? "Preparing files..."
         : status === "PROCESSING"
@@ -803,15 +860,19 @@ function ProcessingProgress({ status, progress, message }: { status: string; pro
       <div className="mb-3 flex items-center justify-between gap-4">
         <div>
           <p className="text-sm font-semibold">{title}</p>
-          <p className="text-sm text-ink/60">{displayMessage}</p>
+          <p className="text-sm text-ink/60">{displayMessage}{elapsedLabel}</p>
         </div>
-        <span className={`text-2xl font-semibold tabular-nums ${isFailed ? "text-coral" : "text-pine"}`}>{visiblePercent}%</span>
+        <span className={`text-2xl font-semibold tabular-nums ${isFailed ? "text-coral" : "text-pine"}`}>{indeterminate ? "Working" : `${visiblePercent}%`}</span>
       </div>
-      <div className="h-3 overflow-hidden rounded-full bg-field">
-        <div
-          className={`h-full rounded-full bg-gradient-to-r transition-all duration-700 ${isFailed ? "from-coral to-gold" : isCompleted ? "from-green-600 to-pine" : "from-pine via-green-500 to-gold animate-pulse"}`}
-          style={{ width: `${visiblePercent}%` }}
-        />
+      <div className="relative h-3 overflow-hidden rounded-full bg-field">
+        {indeterminate ? (
+          <div className="progress-sweep absolute inset-y-0 w-1/2 rounded-full bg-gradient-to-r from-pine via-green-500 to-gold" />
+        ) : (
+          <div
+            className={`h-full rounded-full bg-gradient-to-r transition-all duration-700 ${isFailed ? "from-coral to-gold" : isCompleted ? "from-green-600 to-pine" : "from-pine via-green-500 to-gold animate-pulse"}`}
+            style={{ width: `${visiblePercent}%` }}
+          />
+        )}
       </div>
     </section>
   );

@@ -5,6 +5,7 @@ from backend.app.schemas.dictionaries import DictionaryType
 from backend.app.schemas.files import FileKind
 from backend.app.main import app
 from backend.app.repositories.job_repository import job_repository
+from backend.app.services import file_classifier
 from backend.app.services.column_normalizer import normalize_dataframe
 from backend.app.services.file_classifier import detect_dictionary, inspect_file
 
@@ -81,6 +82,43 @@ def test_correction_formatting_makes_corrections(tmp_path) -> None:
     inspection = inspect_file(path, "file1", "anything.xlsx")
 
     assert inspection.kind == FileKind.CORRECTIONS
+
+
+def test_multi_sheet_formatting_inspection_reuses_workbook(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "formatted_multi_sheet.xlsx"
+    with pd.ExcelWriter(path) as writer:
+        pd.DataFrame([["MD", "DOE", "JANE", "1234567890", "", "P1", "6/1/2026", "SIN1"]], columns=REPORT_COLUMNS).to_excel(
+            writer,
+            sheet_name="Original",
+            index=False,
+        )
+        pd.DataFrame([["MD", "SMITH", "ALICE", "1234567890", "", "P1", "6/1/2026", "SIN2"]], columns=REPORT_COLUMNS).to_excel(
+            writer,
+            sheet_name="Corrections",
+            index=False,
+        )
+
+    from openpyxl import load_workbook as real_load_workbook
+    from openpyxl.styles import Font
+
+    workbook = real_load_workbook(path)
+    worksheet = workbook["Corrections"]
+    worksheet["D2"].font = Font(color="00FF0000")
+    workbook.save(path)
+    workbook.close()
+
+    calls = []
+
+    def counted_load_workbook(*args, **kwargs):
+        calls.append(args[0])
+        return real_load_workbook(*args, **kwargs)
+
+    monkeypatch.setattr(file_classifier, "load_workbook", counted_load_workbook)
+
+    inspection = inspect_file(path, "file1", "anything.xlsx")
+
+    assert inspection.kind == FileKind.CORRECTIONS
+    assert calls == [path]
 
 
 def test_create_job_applies_file_type_override() -> None:
